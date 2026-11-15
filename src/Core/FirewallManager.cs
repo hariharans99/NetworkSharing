@@ -7,6 +7,7 @@ namespace NetworkSharing.Core
     public static class FirewallManager
     {
         public const string RuleName = "NetworkSharing_SMB_Inbound";
+        public const string SpeedRuleName = "NetworkSharing_SpeedTest_Inbound";
 
         public static bool IsPrivateNetwork()
         {
@@ -69,6 +70,35 @@ namespace NetworkSharing.Core
                 Logger.Warning("Could not delete firewall rule: " + ex.Message);
                 return false;
             }
+        }
+
+        public static bool ConfigureInboundSpeedRule()
+        {
+            try
+            {
+                string args = string.Format(
+                    "advfirewall firewall add rule name=\"{0}\" dir=in action=allow protocol=TCP localport=52010 profile=any description=\"Inbound TCP Speed Test daemon for NetworkSharing.exe\"",
+                    SpeedRuleName);
+                int exitCode = RunHiddenCommand("netsh", args);
+                if (exitCode == 0)
+                {
+                    Logger.Info("Configured Windows Firewall rule for Speed Daemon port 52010.");
+                    return true;
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        public static bool RemoveInboundSpeedRule()
+        {
+            try
+            {
+                string args = string.Format("advfirewall firewall delete rule name=\"{0}\"", SpeedRuleName);
+                int exitCode = RunHiddenCommand("netsh", args);
+                return exitCode == 0;
+            }
+            catch { return false; }
         }
 
         private static int RunHiddenCommand(string exe, string args)

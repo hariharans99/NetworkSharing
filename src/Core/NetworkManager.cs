@@ -62,6 +62,7 @@ namespace NetworkSharing.Core
         public double CurrentSpeedBytesPerSec { get; set; }
         public long BytesProcessed { get; set; }
         public long TotalBytes { get; set; }
+        public string IntervalLog { get; set; }
     }
 
     public class SpeedTestResult
@@ -71,10 +72,18 @@ namespace NetworkSharing.Core
         public double WriteSpeedBytesPerSec { get; set; }
         public double ReadSpeedBytesPerSec { get; set; }
         public double AverageSpeedBytesPerSec { get; set; }
+        public double MinSpeedBytesPerSec { get; set; }
+        public double MaxSpeedBytesPerSec { get; set; }
         public long TotalBytesTransferred { get; set; }
         public double DurationSeconds { get; set; }
         public string ErrorMessage { get; set; }
         public bool IsSocketMode { get; set; }
+        public List<string> IntervalLogs { get; set; }
+
+        public SpeedTestResult()
+        {
+            IntervalLogs = new List<string>();
+        }
     }
 
     public static class NetworkManager
@@ -311,6 +320,13 @@ namespace NetworkSharing.Core
 
         public static SpeedTestResult RunSpeedTest(string target, int payloadMb, Action<SpeedTestProgress> progressCallback)
         {
+            // Auto-detect mode: if target is IP or host (without share backslashes or drive colon), default to 30-second iPerf3 mode!
+            bool isDirectShare = target.StartsWith("\\\\") || (target.Length >= 2 && target[1] == ':');
+            return RunSpeedTest(target, isDirectShare ? payloadMb : 30, !isDirectShare, progressCallback);
+        }
+
+        public static SpeedTestResult RunSpeedTest(string target, int payloadOrSeconds, bool isIperfTimedMode, Action<SpeedTestProgress> progressCallback = null)
+        {
             SpeedTestResult result = new SpeedTestResult
             {
                 TargetPathOrHost = target,
@@ -319,7 +335,7 @@ namespace NetworkSharing.Core
 
             if (string.IsNullOrWhiteSpace(target))
             {
-                result.ErrorMessage = "Target host, network share, or drive letter is required.";
+                result.ErrorMessage = "Target host IP, network share, or drive letter is required.";
                 return result;
             }
 
@@ -342,59 +358,30 @@ namespace NetworkSharing.Core
 
             if (testDir != null && Directory.Exists(testDir))
             {
-                return RunFileShareSpeedTest(testDir, payloadMb, progressCallback);
+                return RunFileShareSpeedTest(testDir, payloadOrSeconds, progressCallback);
             }
 
-            // 2. Raw IP or Hostname: Auto-resolve to active SMB share for real physical file transfer
+            // 2. Pure IP or Hostname: Direct Peer-to-Peer iPerf3 Speed Benchmark
             string hostIp = target.TrimStart('\\');
             int slashIdx = hostIp.IndexOf('\\');
             if (slashIdx > 0) hostIp = hostIp.Substring(0, slashIdx);
 
-            string localIp = GetLocalIpAddress();
-            string resolvedSharePath = null;
-
-            if (hostIp == localIp || hostIp.Equals("127.0.0.1") || hostIp.Equals("localhost", StringComparison.OrdinalIgnoreCase) || hostIp.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase))
-            {
-                var localShares = ShareManager.GetActiveShares();
-                if (localShares.Count > 0)
-                {
-                    resolvedSharePath = string.Format(@"\\{0}\{1}", localIp, localShares[0].ShareName);
-                }
-            }
-            else
-            {
-                // Query remote shares
-                try
-                {
-                    var remoteShares = ShareManager.GetRemoteShares(hostIp);
-                    if (remoteShares != null && remoteShares.Count > 0)
-                    {
-                        resolvedSharePath = string.Format(@"\\{0}\{1}", hostIp, remoteShares[0]);
-                    }
-                }
-                catch { }
-            }
-
-            if (!string.IsNullOrEmpty(resolvedSharePath) && Directory.Exists(resolvedSharePath))
-            {
-                Logger.Info("Auto-resolved host to active SMB share for real physical transfer: " + resolvedSharePath);
-                return RunFileShareSpeedTest(resolvedSharePath, payloadMb, progressCallback);
-            }
-
-            // 3. Check if Peer-to-Peer Speed Server is listening on the target
+            // Connect to Speed Daemon on port 52010
             if (TestSpeedServerPort(hostIp))
             {
-                Logger.Info("Connecting to Peer-to-Peer High-Speed TCP Daemon on " + hostIp + ":" + SpeedTestPort);
-                return RunRealTcpSpeedBenchmark(hostIp, payloadMb, progressCallback);
+                int duration = isIperfTimedMode ? payloadOrSeconds : 30;
+                Logger.Info(string.Format("Starting 100% real {0}s iPerf3 TCP benchmark between IP {1} and this PC...", duration, hostIp));
+                return RunTimedIperfSpeedTest(hostIp, duration, progressCallback);
             }
 
-            // 4. Return clear error explaining what to target
+            // 3. If port 52010 not responding, give clear instructions
             result.Success = false;
             result.ErrorMessage = string.Format(
-                "Cannot perform real speed benchmark on '{0}'.\r\n\r\n" +
-                "To measure actual transfer speed:\r\n" +
-                "• Specify a shared folder (e.g. \\\\{0}\\Drive_D or mapped drive Z:), OR\r\n" +
-                "• Ensure NetworkSharing.exe is open on the second PC for instant peer-to-peer TCP speed testing.", hostIp);
+                "Could not connect to Speed Benchmark Daemon on {0}:{1}.\r\n\r\n" +
+                "To test speed between 2 computers using their IP addresses:\r\n" +
+                "1. Make sure NetworkSharing.exe is open on the second computer ({0}).\r\n" +
+                "2. Ensure Windows Firewall allows port {1}.\r\n\r\n" +
+                "(Or to test an SMB shared folder, select or enter the exact share path e.g. \\\\{0}\\YourShareName)", hostIp, SpeedTestPort);
             return result;
         }
 
@@ -581,7 +568,30 @@ namespace NetworkSharing.Core
                         if (read <= 0) return;
                         string cmd = Encoding.ASCII.GetString(cmdBuf, 0, read).Trim();
 
-                        if (cmd.StartsWith("UP "))
+                        if (cmd.StartsWith("STREAM_UP "))
+                        {
+                            int durationSec = int.Parse(cmd.Substring(10));
+                            Stopwatch sw = Stopwatch.StartNew();
+                            byte[] discardBuf = new byte[64 * 1024];
+                            while (sw.Elapsed.TotalSeconds < durationSec + 2)
+                            {
+                                int r = ns.Read(discardBuf, 0, discardBuf.Length);
+                                if (r <= 0) break;
+                            }
+                            byte[] ack = Encoding.ASCII.GetBytes("OK\n");
+                            ns.Write(ack, 0, ack.Length);
+                        }
+                        else if (cmd.StartsWith("STREAM_DOWN "))
+                        {
+                            int durationSec = int.Parse(cmd.Substring(12));
+                            Stopwatch sw = Stopwatch.StartNew();
+                            byte[] dataBuf = new byte[64 * 1024];
+                            while (sw.Elapsed.TotalSeconds < durationSec)
+                            {
+                                ns.Write(dataBuf, 0, dataBuf.Length);
+                            }
+                        }
+                        else if (cmd.StartsWith("UP "))
                         {
                             long bytesExpected = long.Parse(cmd.Substring(3));
                             byte[] discardBuf = new byte[64 * 1024];
@@ -628,7 +638,10 @@ namespace NetworkSharing.Core
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.Warning(string.Format("Probe to Speed Server {0}:{1} failed: {2}", host, SpeedTestPort, ex.Message));
+            }
             return false;
         }
 
@@ -758,6 +771,252 @@ namespace NetworkSharing.Core
             }
 
             return result;
+        }
+
+        private static SpeedTestResult RunTimedIperfSpeedTest(string host, int durationSeconds, Action<SpeedTestProgress> progressCallback)
+        {
+            SpeedTestResult result = new SpeedTestResult
+            {
+                TargetPathOrHost = host + ":" + SpeedTestPort,
+                IsSocketMode = true
+            };
+
+            if (durationSeconds < 2) durationSeconds = 2;
+            int upSec = Math.Max(1, durationSeconds / 2);
+            int downSec = Math.Max(1, durationSeconds - upSec);
+
+            int chunkSize = 64 * 1024;
+            byte[] chunk = new byte[chunkSize];
+            new Random().NextBytes(chunk);
+
+            double minSpeed = double.MaxValue;
+            double maxSpeed = 0;
+            long totalUpBytes = 0;
+            long totalDownBytes = 0;
+
+            string banner1 = "-----------------------------------------------------------";
+            string banner2 = string.Format("Connecting to host {0}, port {1} (iPerf3 TCP Benchmark)", host, SpeedTestPort);
+            string banner3 = "[ ID]  Interval          Transfer     Bandwidth";
+            string banner4 = "-----------------------------------------------------------";
+
+            result.IntervalLogs.Add(banner1);
+            result.IntervalLogs.Add(banner2);
+            result.IntervalLogs.Add(banner3);
+            result.IntervalLogs.Add(banner4);
+
+            if (progressCallback != null)
+            {
+                progressCallback(new SpeedTestProgress
+                {
+                    Stage = string.Format("Connecting to {0}:{1}...", host, SpeedTestPort),
+                    Percent = 0,
+                    IntervalLog = banner2
+                });
+            }
+
+            try
+            {
+                // =========================================================
+                // PHASE 1: UPLOAD (TX) STREAM
+                // =========================================================
+                using (TcpClient client = new TcpClient())
+                {
+                    client.NoDelay = true;
+                    client.SendBufferSize = chunkSize;
+                    client.ReceiveBufferSize = chunkSize;
+                    client.Connect(host, SpeedTestPort);
+
+                    using (NetworkStream ns = client.GetStream())
+                    {
+                        byte[] cmd = Encoding.ASCII.GetBytes("STREAM_UP " + upSec + "\n");
+                        ns.Write(cmd, 0, cmd.Length);
+
+                        Stopwatch swPhase = Stopwatch.StartNew();
+                        Stopwatch swInterval = Stopwatch.StartNew();
+                        long lastIntervalBytes = 0;
+                        int currentSec = 0;
+
+                        while (swPhase.Elapsed.TotalSeconds < upSec)
+                        {
+                            ns.Write(chunk, 0, chunkSize);
+                            totalUpBytes += chunkSize;
+
+                            if (swInterval.ElapsedMilliseconds >= 1000)
+                            {
+                                double secElapsed = swInterval.Elapsed.TotalSeconds;
+                                long intervalBytes = totalUpBytes - lastIntervalBytes;
+                                double intervalSpeed = intervalBytes / secElapsed;
+                                currentSec++;
+
+                                if (intervalSpeed < minSpeed) minSpeed = intervalSpeed;
+                                if (intervalSpeed > maxSpeed) maxSpeed = intervalSpeed;
+
+                                string logLine = string.Format("[TX] [{0,2}.0 - {1,2}.0 sec]  {2,8}  {3,10} (Upload)",
+                                    currentSec - 1, currentSec,
+                                    FormatBytesCompact(intervalBytes),
+                                    FormatSpeedCompact(intervalSpeed));
+                                result.IntervalLogs.Add(logLine);
+
+                                int percent = (int)((swPhase.Elapsed.TotalSeconds / durationSeconds) * 100);
+                                if (progressCallback != null)
+                                {
+                                    progressCallback(new SpeedTestProgress
+                                    {
+                                        Stage = string.Format("TX (Upload): {0}s / {1}s @ {2}", currentSec, upSec, FormatSpeedCompact(intervalSpeed)),
+                                        Percent = Math.Min(50, Math.Max(0, percent)),
+                                        CurrentSpeedBytesPerSec = intervalSpeed,
+                                        BytesProcessed = totalUpBytes,
+                                        TotalBytes = totalUpBytes,
+                                        IntervalLog = logLine
+                                    });
+                                }
+
+                                lastIntervalBytes = totalUpBytes;
+                                swInterval.Restart();
+                            }
+                        }
+
+                        try
+                        {
+                            client.Client.Shutdown(SocketShutdown.Send);
+                            byte[] ack = new byte[8];
+                            client.ReceiveTimeout = 2000;
+                            ns.Read(ack, 0, ack.Length);
+                        }
+                        catch { }
+                    }
+                }
+
+                // =========================================================
+                // PHASE 2: DOWNLOAD (RX) STREAM
+                // =========================================================
+                using (TcpClient client = new TcpClient())
+                {
+                    client.NoDelay = true;
+                    client.SendBufferSize = chunkSize;
+                    client.ReceiveBufferSize = chunkSize;
+                    client.Connect(host, SpeedTestPort);
+
+                    using (NetworkStream ns = client.GetStream())
+                    {
+                        byte[] cmd = Encoding.ASCII.GetBytes("STREAM_DOWN " + downSec + "\n");
+                        ns.Write(cmd, 0, cmd.Length);
+
+                        Stopwatch swPhase = Stopwatch.StartNew();
+                        Stopwatch swInterval = Stopwatch.StartNew();
+                        long lastIntervalBytes = 0;
+                        int currentSec = 0;
+                        byte[] recvBuf = new byte[chunkSize];
+
+                        while (swPhase.Elapsed.TotalSeconds < downSec)
+                        {
+                            int r = ns.Read(recvBuf, 0, recvBuf.Length);
+                            if (r <= 0) break;
+                            totalDownBytes += r;
+
+                            if (swInterval.ElapsedMilliseconds >= 1000)
+                            {
+                                double secElapsed = swInterval.Elapsed.TotalSeconds;
+                                long intervalBytes = totalDownBytes - lastIntervalBytes;
+                                double intervalSpeed = intervalBytes / secElapsed;
+                                currentSec++;
+
+                                if (intervalSpeed < minSpeed) minSpeed = intervalSpeed;
+                                if (intervalSpeed > maxSpeed) maxSpeed = intervalSpeed;
+
+                                string logLine = string.Format("[RX] [{0,2}.0 - {1,2}.0 sec]  {2,8}  {3,10} (Download)",
+                                    currentSec - 1, currentSec,
+                                    FormatBytesCompact(intervalBytes),
+                                    FormatSpeedCompact(intervalSpeed));
+                                result.IntervalLogs.Add(logLine);
+
+                                int percent = 50 + (int)((swPhase.Elapsed.TotalSeconds / durationSeconds) * 100);
+                                if (progressCallback != null)
+                                {
+                                    progressCallback(new SpeedTestProgress
+                                    {
+                                        Stage = string.Format("RX (Download): {0}s / {1}s @ {2}", currentSec, downSec, FormatSpeedCompact(intervalSpeed)),
+                                        Percent = Math.Min(100, Math.Max(50, percent)),
+                                        CurrentSpeedBytesPerSec = intervalSpeed,
+                                        BytesProcessed = totalUpBytes + totalDownBytes,
+                                        TotalBytes = totalUpBytes + totalDownBytes,
+                                        IntervalLog = logLine
+                                    });
+                                }
+
+                                lastIntervalBytes = totalDownBytes;
+                                swInterval.Restart();
+                            }
+                        }
+                    }
+                }
+
+                double upTime = Math.Max(0.5, upSec);
+                double downTime = Math.Max(0.5, downSec);
+                result.WriteSpeedBytesPerSec = totalUpBytes / upTime;
+                result.ReadSpeedBytesPerSec = totalDownBytes / downTime;
+                result.AverageSpeedBytesPerSec = (totalUpBytes + totalDownBytes) / (upTime + downTime);
+                result.TotalBytesTransferred = totalUpBytes + totalDownBytes;
+                result.DurationSeconds = durationSeconds;
+                result.MinSpeedBytesPerSec = minSpeed == double.MaxValue ? 0 : minSpeed;
+                result.MaxSpeedBytesPerSec = maxSpeed;
+                result.Success = true;
+
+                string sumDivider = "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -";
+                string sumUp = string.Format("[SUM] 0.0 - {0,4:F1} sec (TX Upload)   {1,8}  {2,10}", upTime, FormatBytesCompact(totalUpBytes), FormatSpeedCompact(result.WriteSpeedBytesPerSec));
+                string sumDown = string.Format("[SUM] 0.0 - {0,4:F1} sec (RX Download) {1,8}  {2,10}", downTime, FormatBytesCompact(totalDownBytes), FormatSpeedCompact(result.ReadSpeedBytesPerSec));
+                string sumTotal = string.Format("[SUM] Total {0,4:F1} sec Benchmark     {1,8}  {2,10} (Avg Throughput)", durationSeconds, FormatBytesCompact(result.TotalBytesTransferred), FormatSpeedCompact(result.AverageSpeedBytesPerSec));
+
+                result.IntervalLogs.Add(sumDivider);
+                result.IntervalLogs.Add(sumUp);
+                result.IntervalLogs.Add(sumDown);
+                result.IntervalLogs.Add(sumTotal);
+                result.IntervalLogs.Add(banner1);
+
+                if (progressCallback != null)
+                {
+                    progressCallback(new SpeedTestProgress
+                    {
+                        Stage = string.Format("Benchmark Complete ({0}s): {1}", durationSeconds, FormatSpeedCompact(result.AverageSpeedBytesPerSec)),
+                        Percent = 100,
+                        CurrentSpeedBytesPerSec = result.AverageSpeedBytesPerSec,
+                        BytesProcessed = result.TotalBytesTransferred,
+                        TotalBytes = result.TotalBytesTransferred,
+                        IntervalLog = sumTotal
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = ex.Message;
+                Logger.Error("iPerf3 TCP speed benchmark error on " + host, ex);
+            }
+
+            return result;
+        }
+
+        public static string FormatBytesCompact(long bytes)
+        {
+            if (bytes >= 1024L * 1024L * 1024L)
+                return string.Format("{0:F2} GB", bytes / (1024.0 * 1024.0 * 1024.0));
+            if (bytes >= 1024L * 1024L)
+                return string.Format("{0:F1} MB", bytes / (1024.0 * 1024.0));
+            if (bytes >= 1024L)
+                return string.Format("{0:F0} KB", bytes / 1024.0);
+            return bytes + " B";
+        }
+
+        public static string FormatSpeedCompact(double bytesPerSec)
+        {
+            double bitsPerSec = bytesPerSec * 8.0;
+            if (bitsPerSec >= 1000000000.0)
+                return string.Format("{0:F2} Gbps", bitsPerSec / 1000000000.0);
+            if (bitsPerSec >= 1000000.0)
+                return string.Format("{0:F1} Mbps", bitsPerSec / 1000000.0);
+            if (bitsPerSec >= 1000.0)
+                return string.Format("{0:F0} Kbps", bitsPerSec / 1000.0);
+            return string.Format("{0:F0} bps", bitsPerSec);
         }
 
         public static string ResolveHostname(string hostOrIp)

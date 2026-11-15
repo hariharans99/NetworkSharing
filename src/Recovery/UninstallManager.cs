@@ -22,8 +22,9 @@ namespace NetworkSharing.Recovery
                     ShareManager.DeleteShare(share);
                 }
 
-                // 2. Remove application firewall rule
+                // 2. Remove application firewall rules
                 FirewallManager.RemoveInboundSmbRule();
+                FirewallManager.RemoveInboundSpeedRule();
 
                 // 3. Disconnect all mapped network drives
                 DriveMapper.DisconnectAll();

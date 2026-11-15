@@ -190,6 +190,24 @@ namespace NetworkSharing.Tests
                 Assert(!string.IsNullOrEmpty(r.Message), "Ping detailed message must be populated.");
             });
 
+            RunTest(results, "Functional", "iPerf3 IP-to-IP Speed Benchmark Loopback", () =>
+            {
+                bool serverListening = NetworkManager.TestSpeedServerPort("127.0.0.1", 500);
+                if (serverListening)
+                {
+                    var res = NetworkManager.RunSpeedTest("127.0.0.1", 2, true);
+                    Assert(res.Success, "iPerf3 benchmark must succeed: " + res.ErrorMessage);
+                    Assert(res.DurationSeconds >= 1.0, "Benchmark duration must be recorded.");
+                    Assert(res.TotalBytesTransferred > 0, "Benchmark must physically stream real bytes.");
+                }
+                else
+                {
+                    // In sandboxed environments without loopback socket rights, verify routing & error guidance
+                    var res = NetworkManager.RunSpeedTest("127.0.0.1", 2, true);
+                    Assert(res.ErrorMessage != null && res.ErrorMessage.Contains("52010"), "Error message must guide user to speed benchmark port 52010.");
+                }
+            });
+
             // --- 4. ADVANCED & MOBILE CAPABILITY TESTS ---
             RunTest(results, "Mobile", "Mobile QR Code Bitmap Synthesis", () =>
             {

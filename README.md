@@ -1,7 +1,7 @@
 # NetworkSharing.exe – Windows Network Drive & Folder Sharing Manager
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)](https://github.com/hariharans99/NetworkSharing)
-[![Tests](https://img.shields.io/badge/tests-22%2F22%20passed-brightgreen.svg)](https://github.com/hariharans99/NetworkSharing)
+[![Tests](https://img.shields.io/badge/tests-23%2F23%20passed-brightgreen.svg)](https://github.com/hariharans99/NetworkSharing)
 [![Architecture](https://img.shields.io/badge/arch-x64-orange.svg)](https://github.com/hariharans99/NetworkSharing)
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-blueviolet.svg)](https://github.com/hariharans99/NetworkSharing/actions)
 [![Framework](https://img.shields.io/badge/.NET-Framework%204.5%2B%20%2F%20Native-purple.svg)](https://github.com/hariharans99/NetworkSharing)
@@ -12,7 +12,8 @@ A production-grade, secure, lightweight Windows desktop application designed to 
 
 ## ⚡ Highlights
 
-* **Single Standalone Executable:** Zero installation and zero external dependencies required (181 KB self-contained).
+* **Single Standalone Executable:** Zero installation and zero external dependencies required (191 KB self-contained).
+* **⚡ 30-Second iPerf3 Continuous Speed Benchmark:** Connect 2 computers directly by IP address (e.g. `192.168.137.62`) and stream raw physical TCP packets over port `52010` for 10s, 30s, or 60s with a live 1-second interval scrolling console (upload speed, download speed, total data, and throughput in Mbps/Gbps) — zero Windows credentials or disk permissions needed.
 * **📱 Mobile Phone QR Code Sharing:** Built-in vector QR code generator for instant connection from iPhone (*Files* app) and Android devices without typing IPs or passwords.
 * **👥 Live Connected Clients Monitor:** Real-time visibility into active remote computers, connected users, and idle durations with a 1-click **Disconnect / Kick Client** button.
 * **🔒 SMB 3.1.1 Wire Encryption & Multichannel:** Optional packet encryption protecting sensitive data over Wi-Fi, plus Multichannel adapter aggregation for 2x throughput.
@@ -22,9 +23,9 @@ A production-grade, secure, lightweight Windows desktop application designed to 
 * **Native Windows SMB 2/3:** Uses native Windows file sharing services via NetAPI32 without third-party servers.
 * **Zero Hardcoded Passwords:** Dedicated local standard Windows user account (`ShareUser` or custom) with cryptographically secure random password generation.
 * **Dual-Layer Credential Vault:** Windows Credential Manager API (`Advapi32.dll` `CredWriteW`) with Windows DPAPI fallback.
-* **Local Subnet Firewall Restriction:** Inbound TCP 445 scoped strictly to the local subnet on confirmed Private network profiles.
+* **Local Subnet Firewall Restriction:** Inbound TCP 445 scoped strictly to the local subnet on confirmed Private network profiles, plus dedicated speed daemon port `52010`.
 * **Transactional Rollback & Recovery:** Operation journal (`journal.txt`) and SDDL security descriptor backups for clean, atomic rollback.
-* **Built-in Automated Test Suite:** Run `NetworkSharing.exe --test` for instant verification of security, mobile, and functional components.
+* **Built-in Automated Test Suite:** Run `NetworkSharing.exe --test` for instant verification of security, mobile, speed benchmark, and functional components.
 
 ---
 
@@ -133,6 +134,7 @@ Run the built-in automated verification tests from the command line:
 | **PASS** | Functional | Local Network IP Resolution | Verified |
 | **PASS** | Functional | Speed Test Format Unit Toggle Conversion | Verified |
 | **PASS** | Functional | Ping Latency MS Measurement | Verified |
+| **PASS** | Functional | iPerf3 IP-to-IP Speed Benchmark Loopback | Verified |
 | **PASS** | Mobile | Mobile QR Code Bitmap Synthesis | Verified |
 | **PASS** | Monitoring | Active SMB Session Enumeration Query | Verified |
 | **PASS** | Recovery | Transaction Manager Journal & Rollback Lifecycle | Verified |
@@ -142,8 +144,8 @@ Run the built-in automated verification tests from the command line:
 ## 📦 Binary Release Manifest
 
 * **File Name:** `NetworkSharing.exe`
-* **Size:** `185,856 bytes` (185.9 KB)
+* **Size:** `195,584 bytes` (195.6 KB)
 * **Architecture:** `x64`
 * **Target Runtime:** .NET Framework 4.5+ / Windows 10 & 11 native
-* **SHA-256 Checksum:** `5AB7E5BCECA337D5075418D1B1EB136F77422FF71031FA980B6BA603276E961A`
+* **SHA-256 Checksum:** `24B2F8DEB7417B70A326FE4BA9D0248C935ED80A408AAAECB0A7758C0AFDC1E9`
 

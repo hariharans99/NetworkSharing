@@ -27,24 +27,33 @@ namespace NetworkSharing.UI
 
         // 3. Speed Test Card (Actual speed between 2 computers with unit toggle)
         private ModernCard _cardSpeed;
+        private ModernButton _btnModeIperf;
+        private ModernButton _btnModeSmb;
+        private bool _isIperfMode = true;
+
+        private Label _lblSpeedTarget;
         private ComboBox _cmbSpeedTarget;
+        private Label _lblDurationOrPayload;
+        private ComboBox _cmbDuration;
         private ComboBox _cmbPayloadSize;
         private ModernButton _btnStartSpeedTest;
         private ProgressBar _speedProgress;
         private Label _lblSpeedStatus;
+        private TextBox _txtIperfLog;
 
         // Unit Toggle Buttons
         private ModernButton _btnUnitMBps;
         private ModernButton _btnUnitMbps;
         private ModernButton _btnUnitGBps;
         private ModernButton _btnUnitGbps;
-        private SpeedUnit _currentUnit = SpeedUnit.MBps;
+        private SpeedUnit _currentUnit = SpeedUnit.Mbps;
 
         // Speed Metrics Display
         private Label _lblWriteSpeed;
         private Label _lblReadSpeed;
         private Label _lblAvgSpeed;
         private Label _lblSpeedDetails;
+        private Panel _pnlMetrics;
         private SpeedTestResult _lastSpeedResult;
 
         // 4. Logs Card
@@ -186,12 +195,12 @@ namespace NetworkSharing.UI
             _pnlFlow.Controls.Add(_cardPing);
 
             // -------------------------------------------------------------
-            // CARD 3: SPEED TEST BETWEEN 2 COMPUTERS (WITH UNIT TOGGLE)
+            // CARD 3: SPEED TEST BETWEEN 2 COMPUTERS (IP-TO-IP / SMB)
             // -------------------------------------------------------------
-            _cardSpeed = new ModernCard { Height = 265 };
+            _cardSpeed = new ModernCard { Height = 430 };
             Label lblSpeedHdr = new Label
             {
-                Text = "REAL SPEED TEST BETWEEN 2 COMPUTERS",
+                Text = "REAL SPEED BENCHMARK BETWEEN 2 COMPUTERS (IP-TO-IP / SMB)",
                 Font = UITheme.SubHeaderFont,
                 ForeColor = UITheme.AccentColor,
                 Location = new Point(18, 12),
@@ -200,12 +209,45 @@ namespace NetworkSharing.UI
             };
             _cardSpeed.Controls.Add(lblSpeedHdr);
 
-            Label lblSpeedTarget = new Label { Text = "Target Host / Share:", Location = new Point(18, 42), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
-            _cardSpeed.Controls.Add(lblSpeedTarget);
+            // Row 1: Mode Switcher (iPerf3 Direct IP vs SMB Share)
+            Label lblMode = new Label { Text = "Mode:", Location = new Point(18, 42), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
+            _cardSpeed.Controls.Add(lblMode);
+
+            _btnModeIperf = new ModernButton
+            {
+                Text = "⚡ Direct IP-to-IP (30s iPerf3 Benchmark)",
+                Location = new Point(145, 38),
+                Width = 275,
+                Height = 28,
+                IsPill = true,
+                IsPrimary = true,
+                BorderRadius = 14,
+                Font = UITheme.BoldFont
+            };
+            _btnModeIperf.Click += (s, e) => SetBenchmarkMode(true);
+            _cardSpeed.Controls.Add(_btnModeIperf);
+
+            _btnModeSmb = new ModernButton
+            {
+                Text = "📂 SMB Shared Folder (Read/Write)",
+                Location = new Point(428, 38),
+                Width = 240,
+                Height = 28,
+                IsPill = true,
+                IsPrimary = false,
+                BorderRadius = 14,
+                Font = UITheme.BoldFont
+            };
+            _btnModeSmb.Click += (s, e) => SetBenchmarkMode(false);
+            _cardSpeed.Controls.Add(_btnModeSmb);
+
+            // Row 2: Target Host IP / Share Path
+            _lblSpeedTarget = new Label { Text = "Target IP / Host:", Location = new Point(18, 77), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
+            _cardSpeed.Controls.Add(_lblSpeedTarget);
 
             _cmbSpeedTarget = new ComboBox
             {
-                Location = new Point(165, 39),
+                Location = new Point(145, 74),
                 Height = 28,
                 Font = UITheme.RegularFont,
                 DropDownStyle = ComboBoxStyle.DropDown,
@@ -213,35 +255,12 @@ namespace NetworkSharing.UI
             };
             _cardSpeed.Controls.Add(_cmbSpeedTarget);
 
-            Label lblSize = new Label { Text = "Payload:", Location = new Point(18, 78), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
-            _cardSpeed.Controls.Add(lblSize);
-
-            _cmbPayloadSize = new ComboBox { Location = new Point(90, 75), Width = 150, DropDownStyle = ComboBoxStyle.DropDownList, Font = UITheme.RegularFont };
-            _cmbPayloadSize.Items.AddRange(new object[] { "10 MB (Quick)", "50 MB (Balanced)", "100 MB (Accurate)", "250 MB (Gigabit Stress)" });
-            _cmbPayloadSize.SelectedIndex = 1; // 50 MB default
-            _cardSpeed.Controls.Add(_cmbPayloadSize);
-
-            // Unit Toggle Label & Pills
-            Label lblUnit = new Label { Text = "Unit Toggle:", Location = new Point(265, 78), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
-            _cardSpeed.Controls.Add(lblUnit);
-
-            _btnUnitMBps = CreateUnitPill("MB/s", SpeedUnit.MBps, 355);
-            _btnUnitMbps = CreateUnitPill("Mbps", SpeedUnit.Mbps, 425);
-            _btnUnitGBps = CreateUnitPill("GB/s", SpeedUnit.GBps, 495);
-            _btnUnitGbps = CreateUnitPill("Gbps", SpeedUnit.Gbps, 565);
-
-            _cardSpeed.Controls.Add(_btnUnitMBps);
-            _cardSpeed.Controls.Add(_btnUnitMbps);
-            _cardSpeed.Controls.Add(_btnUnitGBps);
-            _cardSpeed.Controls.Add(_btnUnitGbps);
-            UpdateUnitPills();
-
             _btnStartSpeedTest = new ModernButton
             {
-                Text = "Start Speed Test",
+                Text = "Start iPerf3 Test",
                 IconType = ButtonIcon.Rocket,
-                Height = 36,
-                Width = 180,
+                Height = 32,
+                Width = 175,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 IsPrimary = true,
                 BorderRadius = 8
@@ -249,18 +268,62 @@ namespace NetworkSharing.UI
             _btnStartSpeedTest.Click += OnStartSpeedTestClick;
             _cardSpeed.Controls.Add(_btnStartSpeedTest);
 
+            // Row 3: Duration / Payload + Unit Toggle
+            _lblDurationOrPayload = new Label { Text = "Duration:", Location = new Point(18, 113), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
+            _cardSpeed.Controls.Add(_lblDurationOrPayload);
+
+            _cmbDuration = new ComboBox
+            {
+                Location = new Point(145, 110),
+                Width = 200,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = UITheme.RegularFont
+            };
+            _cmbDuration.Items.AddRange(new object[] { "10 Seconds (Quick)", "30 Seconds (iPerf3 Standard)", "60 Seconds (Stress Test)" });
+            _cmbDuration.SelectedIndex = 1; // 30s default
+            _cardSpeed.Controls.Add(_cmbDuration);
+
+            _cmbPayloadSize = new ComboBox
+            {
+                Location = new Point(145, 110),
+                Width = 200,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = UITheme.RegularFont,
+                Visible = false
+            };
+            _cmbPayloadSize.Items.AddRange(new object[] { "10 MB (Quick)", "50 MB (Balanced)", "100 MB (Accurate)", "250 MB (Gigabit Stress)" });
+            _cmbPayloadSize.SelectedIndex = 1;
+            _cardSpeed.Controls.Add(_cmbPayloadSize);
+
+            // Unit Toggle Label & Pills
+            Label lblUnit = new Label { Text = "Unit Toggle:", Location = new Point(360, 113), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
+            _cardSpeed.Controls.Add(lblUnit);
+
+            _btnUnitMBps = CreateUnitPill("MB/s", SpeedUnit.MBps, 445);
+            _btnUnitMbps = CreateUnitPill("Mbps", SpeedUnit.Mbps, 515);
+            _btnUnitGBps = CreateUnitPill("GB/s", SpeedUnit.GBps, 585);
+            _btnUnitGbps = CreateUnitPill("Gbps", SpeedUnit.Gbps, 655);
+
+            _cardSpeed.Controls.Add(_btnUnitMBps);
+            _cardSpeed.Controls.Add(_btnUnitMbps);
+            _cardSpeed.Controls.Add(_btnUnitGBps);
+            _cardSpeed.Controls.Add(_btnUnitGbps);
+            UpdateUnitPills();
+
+            // Row 4: Progress Bar
             _speedProgress = new ProgressBar
             {
-                Location = new Point(18, 118),
-                Height = 12,
+                Location = new Point(18, 148),
+                Height = 8,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             _cardSpeed.Controls.Add(_speedProgress);
 
+            // Row 5: Status Label
             _lblSpeedStatus = new Label
             {
-                Text = "Ready to test transfer speed between computers.",
-                Location = new Point(18, 136),
+                Text = "● Ready for 30s peer-to-peer TCP network speed benchmark with target IP.",
+                Location = new Point(18, 162),
                 AutoSize = true,
                 Font = UITheme.SmallFont,
                 ForeColor = UITheme.SubTextColor,
@@ -269,11 +332,26 @@ namespace NetworkSharing.UI
             };
             _cardSpeed.Controls.Add(_lblSpeedStatus);
 
-            // Metrics Display Cards / Labels
-            Panel pnlMetrics = new Panel
+            // Row 6: Live 1-Second Interval Stream Log Box (iPerf3 Monospace Console)
+            _txtIperfLog = new TextBox
             {
-                Location = new Point(18, 160),
-                Height = 90,
+                Location = new Point(18, 184),
+                Height = 115,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                Font = new Font("Consolas", 9f),
+                BackColor = UITheme.InputBgColor,
+                ForeColor = UITheme.TextColor,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            _cardSpeed.Controls.Add(_txtIperfLog);
+
+            // Row 7: Metrics Display Cards / Labels
+            _pnlMetrics = new Panel
+            {
+                Location = new Point(18, 308),
+                Height = 72,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
 
@@ -291,21 +369,22 @@ namespace NetworkSharing.UI
             gridMetrics.Controls.Add(new Label { Text = "READ (DOWNLOAD) SPEED", Font = UITheme.SmallFont, ForeColor = UITheme.SubTextColor, Tag = "SubText", TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill }, 1, 0);
             gridMetrics.Controls.Add(new Label { Text = "AVERAGE THROUGHPUT", Font = UITheme.SmallFont, ForeColor = UITheme.SubTextColor, Tag = "SubText", TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill }, 2, 0);
 
-            _lblWriteSpeed = new Label { Text = "---", Font = new Font("Segoe UI", 14f, FontStyle.Bold), ForeColor = UITheme.AccentColor, TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
-            _lblReadSpeed = new Label { Text = "---", Font = new Font("Segoe UI", 14f, FontStyle.Bold), ForeColor = UITheme.SuccessColor, TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
-            _lblAvgSpeed = new Label { Text = "---", Font = new Font("Segoe UI", 14f, FontStyle.Bold), ForeColor = UITheme.TextColor, TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
+            _lblWriteSpeed = new Label { Text = "---", Font = new Font("Segoe UI", 13f, FontStyle.Bold), ForeColor = UITheme.AccentColor, TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
+            _lblReadSpeed = new Label { Text = "---", Font = new Font("Segoe UI", 13f, FontStyle.Bold), ForeColor = UITheme.SuccessColor, TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
+            _lblAvgSpeed = new Label { Text = "---", Font = new Font("Segoe UI", 13f, FontStyle.Bold), ForeColor = UITheme.TextColor, TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
 
             gridMetrics.Controls.Add(_lblWriteSpeed, 0, 1);
             gridMetrics.Controls.Add(_lblReadSpeed, 1, 1);
             gridMetrics.Controls.Add(_lblAvgSpeed, 2, 1);
 
-            pnlMetrics.Controls.Add(gridMetrics);
-            _cardSpeed.Controls.Add(pnlMetrics);
+            _pnlMetrics.Controls.Add(gridMetrics);
+            _cardSpeed.Controls.Add(_pnlMetrics);
 
+            // Row 8: Details & Classification
             _lblSpeedDetails = new Label
             {
                 Text = "",
-                Location = new Point(18, 245),
+                Location = new Point(18, 388),
                 AutoSize = true,
                 Font = UITheme.SmallFont,
                 ForeColor = UITheme.SubTextColor,
@@ -363,12 +442,42 @@ namespace NetworkSharing.UI
             this.Controls.Add(_pnlFlow);
         }
 
+        private void SetBenchmarkMode(bool isIperf)
+        {
+            _isIperfMode = isIperf;
+            _btnModeIperf.IsPrimary = isIperf;
+            _btnModeSmb.IsPrimary = !isIperf;
+            _btnModeIperf.Invalidate();
+            _btnModeSmb.Invalidate();
+
+            if (_isIperfMode)
+            {
+                _lblSpeedTarget.Text = "Target IP / Host:";
+                _lblDurationOrPayload.Text = "Duration:";
+                _cmbDuration.Visible = true;
+                _cmbPayloadSize.Visible = false;
+                _btnStartSpeedTest.Text = "Start iPerf3 Test";
+                _lblSpeedStatus.Text = "● Ready for 30s peer-to-peer TCP network speed benchmark with target IP.";
+                _lblSpeedStatus.ForeColor = UITheme.SubTextColor;
+            }
+            else
+            {
+                _lblSpeedTarget.Text = "Target Share Path:";
+                _lblDurationOrPayload.Text = "Payload:";
+                _cmbDuration.Visible = false;
+                _cmbPayloadSize.Visible = true;
+                _btnStartSpeedTest.Text = "Start SMB Test";
+                _lblSpeedStatus.Text = "● Ready to benchmark SMB file read/write speed on target shared folder or drive.";
+                _lblSpeedStatus.ForeColor = UITheme.SubTextColor;
+            }
+        }
+
         private ModernButton CreateUnitPill(string text, SpeedUnit unit, int left)
         {
             ModernButton btn = new ModernButton
             {
                 Text = text,
-                Location = new Point(left, 74),
+                Location = new Point(left, 108),
                 Width = 62,
                 Height = 28,
                 IsPill = true,
@@ -431,9 +540,11 @@ namespace NetworkSharing.UI
             _txtPingOutput.Width = targetWidth - 36;
 
             // Speed layout
-            _cmbSpeedTarget.Width = targetWidth - 165 - 195;
-            _btnStartSpeedTest.Location = new Point(targetWidth - 184, 70);
+            _cmbSpeedTarget.Width = targetWidth - 145 - 195;
+            _btnStartSpeedTest.Location = new Point(targetWidth - 180, 72);
             _speedProgress.Width = targetWidth - 36;
+            _txtIperfLog.Width = targetWidth - 36;
+            _pnlMetrics.Width = targetWidth - 36;
             _txtLogs.Width = targetWidth - 36;
         }
 
@@ -480,6 +591,9 @@ namespace NetworkSharing.UI
             {
                 _cmbSpeedTarget.Text = ip;
             }
+
+            SetBenchmarkMode(true);
+            _cmbSpeedTarget.Text = ip;
 
             StringBuilder sb = new StringBuilder();
             foreach (var l in Logger.GetRecentEntries())
@@ -541,6 +655,12 @@ namespace NetworkSharing.UI
                                 "✔ Ping Latency: {0:F1} ms (Avg)   |   Min: {1} ms   |   Max: {2} ms   |   Loss: {3:F0}% ({4}/{5} received)",
                                 stats.AvgMs, stats.MinMs, stats.MaxMs, stats.LossPercentage, stats.Received, stats.Sent);
                             _lblPingSummary.ForeColor = UITheme.SuccessColor;
+
+                            // Automatically suggest this responding host for the speed test if in IP mode!
+                            if (_isIperfMode && (_cmbSpeedTarget.Text == NetworkManager.GetLocalIpAddress() || string.IsNullOrEmpty(_cmbSpeedTarget.Text)))
+                            {
+                                _cmbSpeedTarget.Text = host;
+                            }
                         }
                         else
                         {
@@ -608,9 +728,14 @@ namespace NetworkSharing.UI
             string target = _cmbSpeedTarget.Text.Trim();
             if (string.IsNullOrEmpty(target))
             {
-                MessageBox.Show("Please select or enter a target host IP, UNC share (e.g. \\\\192.168.0.128\\Drive_D), or mapped drive letter (e.g. Z:).", "Target Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Please enter a target host IP address (e.g. 192.168.137.62) or network share path.", "Target Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            int duration = 30;
+            if (_cmbDuration.SelectedIndex == 0) duration = 10;
+            else if (_cmbDuration.SelectedIndex == 1) duration = 30;
+            else if (_cmbDuration.SelectedIndex == 2) duration = 60;
 
             int payloadMb = 50;
             switch (_cmbPayloadSize.SelectedIndex)
@@ -621,25 +746,46 @@ namespace NetworkSharing.UI
                 case 3: payloadMb = 250; break;
             }
 
+            int paramValue = _isIperfMode ? duration : payloadMb;
+
             _btnStartSpeedTest.Enabled = false;
-            _btnStartSpeedTest.Text = "Testing Speed...";
+            _btnStartSpeedTest.Text = "Benchmarking...";
             _speedProgress.Value = 0;
-            _lblSpeedStatus.Text = "Starting real physical network speed benchmark (" + payloadMb + " MB payload)...";
+            _txtIperfLog.Clear();
+            _lblWriteSpeed.Text = "---";
+            _lblReadSpeed.Text = "---";
+            _lblAvgSpeed.Text = "---";
+            _lblSpeedDetails.Text = "";
+
+            if (_isIperfMode)
+            {
+                _lblSpeedStatus.Text = string.Format("Starting 100% real {0}s iPerf3 TCP benchmark with {1}...", duration, target);
+                _txtIperfLog.AppendText(string.Format("Connecting to {0}:{1} [{2}-Second iPerf3 Continuous Benchmark]...\r\n", target, NetworkManager.SpeedTestPort, duration));
+            }
+            else
+            {
+                _lblSpeedStatus.Text = string.Format("Starting SMB file read/write speed test on {0} ({1} MB)...", target, payloadMb);
+                _txtIperfLog.AppendText(string.Format("Starting SMB file read/write transfer test on {0}...\r\n", target));
+            }
             _lblSpeedStatus.ForeColor = UITheme.SubTextColor;
 
             Task.Factory.StartNew(() =>
             {
                 try
                 {
-                    _lastSpeedResult = NetworkManager.RunSpeedTest(target, payloadMb, (progress) =>
+                    _lastSpeedResult = NetworkManager.RunSpeedTest(target, paramValue, _isIperfMode, (progress) =>
                     {
                         this.BeginInvoke(new Action(() =>
                         {
                             _speedProgress.Value = Math.Min(100, Math.Max(0, progress.Percent));
-                            _lblSpeedStatus.Text = progress.Stage + string.Format(" ({0}%)", progress.Percent);
+                            _lblSpeedStatus.Text = progress.Stage;
                             if (progress.CurrentSpeedBytesPerSec > 0)
                             {
                                 _lblAvgSpeed.Text = NetworkManager.FormatSpeed(progress.CurrentSpeedBytesPerSec, _currentUnit);
+                            }
+                            if (!string.IsNullOrEmpty(progress.IntervalLog))
+                            {
+                                _txtIperfLog.AppendText(progress.IntervalLog + "\r\n");
                             }
                         }));
                     });
@@ -651,25 +797,29 @@ namespace NetworkSharing.UI
                         {
                             RenderSpeedMetrics();
                             string modeDesc = _lastSpeedResult.IsSocketMode 
-                                ? "Real Physical TCP Wire Stream (Port 52010)" 
+                                ? string.Format("Real Physical TCP Stream ({0:F1}s)", _lastSpeedResult.DurationSeconds) 
                                 : "Real Physical SMB File Transfer (Read/Write)";
-                            _lblSpeedStatus.Text = string.Format("✔ Real physical speed test completed ({0}) in {1:F2}s.", modeDesc, _lastSpeedResult.DurationSeconds);
+                            _lblSpeedStatus.Text = string.Format("✔ Real physical speed benchmark completed ({0}) in {1:F2}s.", modeDesc, _lastSpeedResult.DurationSeconds);
                             _lblSpeedStatus.ForeColor = UITheme.SuccessColor;
 
                             // Estimate connection type
-                            string rating = "Standard Wi-Fi / Fast Ethernet";
+                            string rating = "Standard Network";
                             double mbps = (_lastSpeedResult.AverageSpeedBytesPerSec * 8.0) / 1000000.0;
-                            if (mbps >= 800) rating = "Gigabit Local Network (1 Gbps) Verified";
+                            if (mbps >= 8000) rating = "10 Gigabit Network (10 Gbps) Verified";
+                            else if (mbps >= 2000) rating = "2.5 Gigabit Network (2.5 Gbps) Verified";
+                            else if (mbps >= 800) rating = "Gigabit Local Network (1 Gbps) Verified";
                             else if (mbps >= 300) rating = "High-Speed Wi-Fi 5/6 (300+ Mbps) Verified";
                             else if (mbps >= 80) rating = "100 Mbps Ethernet / 2.4 GHz Wi-Fi";
 
-                            _lblSpeedDetails.Text = string.Format("Classification: {0}   •   Transferred: {1} MB payload physically in {2:F2}s",
-                                rating, payloadMb, _lastSpeedResult.DurationSeconds);
+                            string totalData = NetworkManager.FormatBytesCompact(_lastSpeedResult.TotalBytesTransferred);
+                            _lblSpeedDetails.Text = string.Format("Classification: {0}   •   Transferred: {1} physically in {2:F1}s",
+                                rating, totalData, _lastSpeedResult.DurationSeconds);
                         }
                         else
                         {
                             _lblSpeedStatus.Text = "✖ Speed test failed: " + _lastSpeedResult.ErrorMessage;
                             _lblSpeedStatus.ForeColor = UITheme.DangerColor;
+                            _txtIperfLog.AppendText("\r\n[ERROR] " + _lastSpeedResult.ErrorMessage + "\r\n");
                         }
                     }));
                 }
@@ -678,7 +828,7 @@ namespace NetworkSharing.UI
                     this.BeginInvoke(new Action(() =>
                     {
                         _btnStartSpeedTest.Enabled = true;
-                        _btnStartSpeedTest.Text = "Start Speed Test";
+                        _btnStartSpeedTest.Text = _isIperfMode ? "Start iPerf3 Test" : "Start SMB Test";
                     }));
                 }
             });
