@@ -1,0 +1,21 @@
+# Build and executable artifacts
+*.obj
+*.pdb
+*.bak
+*.tmp
+*.log
+journal.txt
+app_shares.txt
+
+# Visual Studio & IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+bin/
+obj/
+
+# Windows desktop / explorer files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
