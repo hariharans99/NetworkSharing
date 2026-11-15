@@ -1,12 +1,17 @@
 # NetworkSharing.exe – Windows Network Drive & Folder Sharing Manager
 
-A production-grade, secure, lightweight Windows desktop application designed to easily share drives and folders over a local network, configure custom credentials, enforce granular NTFS/SMB permissions, and connect from other Windows PCs in 1 click.
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)](https://github.com/hariharans99/NetworkSharing)
+[![Tests](https://img.shields.io/badge/tests-20%2F20%20passed-brightgreen.svg)](https://github.com/hariharans99/NetworkSharing)
+[![Architecture](https://img.shields.io/badge/arch-x64-orange.svg)](https://github.com/hariharans99/NetworkSharing)
+[![Framework](https://img.shields.io/badge/.NET-Framework%204.5%2B%20%2F%20Native-purple.svg)](https://github.com/hariharans99/NetworkSharing)
+
+A production-grade, secure, lightweight Windows desktop application designed to easily share drives and folders over a local network, configure custom credentials, enforce granular NTFS/SMB permissions, test network throughput speed, and connect from other Windows PCs in 1 click.
 
 ---
 
 ## ⚡ Highlights
 
-* **Single Standalone Executable:** Zero installation and zero external dependencies required (137 KB self-contained).
+* **Single Standalone Executable:** Zero installation and zero external dependencies required (164 KB self-contained).
 * **Role-Based Privilege Separation:** Client operations run as standard user without elevation; Host setup requests UAC on demand only when needed.
 * **Modern Windows 11 Fluent UI:** Clean Windows Forms interface with Light and Dark theme toggles, rounded cards, vector icons, and rigid dock layout.
 * **Native Windows SMB 2/3:** Uses native Windows file sharing services via NetAPI32 without third-party servers.
