@@ -30,6 +30,8 @@ namespace NetworkSharing.UI
         private SettingsControl _ctrlSettings;
 
         private Panel _pnlDivider;
+        private NotifyIcon _trayIcon;
+        private ContextMenuStrip _trayMenu;
 
         public MainDashboard(NetworkSharing.Privileges.DispatchedOperation initialOp = null)
         {
@@ -241,6 +243,97 @@ namespace NetworkSharing.UI
             _btnNavClient.Click += (s, e) => SwitchView(_ctrlClient, _btnNavClient);
             _btnNavSpeed.Click += (s, e) => SwitchView(_ctrlDiagnostics, _btnNavSpeed);
             _btnNavSettings.Click += (s, e) => SwitchView(_ctrlSettings, _btnNavSettings);
+
+            // -------------------------------------------------------------
+            // 5. System Tray Notification & Minimization
+            // -------------------------------------------------------------
+            _trayMenu = new ContextMenuStrip();
+            _trayMenu.Items.Add("Open Dashboard", null, (s, e) => RestoreFromTray());
+            _trayMenu.Items.Add(new ToolStripSeparator());
+            _trayMenu.Items.Add("Active Shares", null, (s, e) =>
+            {
+                RestoreFromTray();
+                SwitchView(_ctrlHost, _btnNavHost);
+            });
+            _trayMenu.Items.Add("Speed & Ping Test", null, (s, e) =>
+            {
+                RestoreFromTray();
+                SwitchView(_ctrlDiagnostics, _btnNavSpeed);
+            });
+            _trayMenu.Items.Add(new ToolStripSeparator());
+            _trayMenu.Items.Add("Exit NetworkSharing", null, (s, e) =>
+            {
+                if (_trayIcon != null) _trayIcon.Visible = false;
+                Application.Exit();
+            });
+
+            _trayIcon = new NotifyIcon
+            {
+                Text = "Network Sharing Manager",
+                Icon = SystemIcons.Application,
+                ContextMenuStrip = _trayMenu,
+                Visible = true
+            };
+            _trayIcon.DoubleClick += (s, e) => RestoreFromTray();
+
+            _ctrlHost.ShareCreated += () =>
+            {
+                ShowNotification("Network Share Live", "New SMB share is active and accessible on your Wi-Fi.");
+            };
+        }
+
+        public void ShowNotification(string title, string message)
+        {
+            if (_trayIcon != null && _trayIcon.Visible)
+            {
+                try
+                {
+                    _trayIcon.ShowBalloonTip(3000, title, message, ToolTipIcon.Info);
+                }
+                catch { }
+            }
+        }
+
+        private void RestoreFromTray()
+        {
+            this.Show();
+            this.WindowState = FormWindowState.Normal;
+            this.BringToFront();
+            this.Activate();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                this.Hide();
+                ShowNotification("NetworkSharing Running in Background", "NetworkSharing is minimized to the System Tray. Double-click icon to reopen.");
+            }
+            else
+            {
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Visible = false;
+                    _trayIcon.Dispose();
+                    _trayIcon = null;
+                }
+                base.OnFormClosing(e);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Visible = false;
+                    _trayIcon.Dispose();
+                    _trayIcon = null;
+                }
+            }
+            base.Dispose(disposing);
         }
 
         private ModernButton CreateNavButton(string text, ButtonIcon icon)

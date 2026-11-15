@@ -190,7 +190,23 @@ namespace NetworkSharing.Tests
                 Assert(!string.IsNullOrEmpty(r.Message), "Ping detailed message must be populated.");
             });
 
-            // --- 4. RECOVERY & TRANSACTION TESTS ---
+            // --- 4. ADVANCED & MOBILE CAPABILITY TESTS ---
+            RunTest(results, "Mobile", "Mobile QR Code Bitmap Synthesis", () =>
+            {
+                using (var bmp = NetworkSharing.UI.QrCodeGenerator.GenerateQrBitmap("smb://192.168.0.128/Drive_D", 220))
+                {
+                    Assert(bmp != null, "QR Bitmap must not be null.");
+                    Assert(bmp.Width == 220 && bmp.Height == 220, "QR Bitmap dimensions must match requested pixel size.");
+                }
+            });
+
+            RunTest(results, "Monitoring", "Active SMB Session Enumeration Query", () =>
+            {
+                var sessions = SessionManager.GetActiveSessions();
+                Assert(sessions != null, "GetActiveSessions must return a valid non-null list.");
+            });
+
+            // --- 5. RECOVERY & TRANSACTION TESTS ---
             RunTest(results, "Recovery", "Transaction Manager Journal & Rollback Lifecycle", () =>
             {
                 var tx = TransactionManager.BeginTransaction("TestLifecycleOperation");

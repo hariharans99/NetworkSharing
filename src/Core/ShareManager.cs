@@ -85,7 +85,33 @@ namespace NetworkSharing.Core
             catch { }
         }
 
-        public static bool CreateShare(string shareName, string folderPath, string username, SharePermissionType permission, string description = "Shared via NetworkSharing.exe")
+        public static bool SetSmbEncryption(string shareName, bool enable)
+        {
+            try
+            {
+                string cmd = string.Format("-NoProfile -ExecutionPolicy Bypass -Command \"Set-SmbShare -Name '{0}' -EncryptData ${1} -Force\"",
+                    shareName, enable ? "true" : "false");
+                RunHiddenCommand("powershell.exe", cmd);
+                Logger.Info(string.Format("SMB 3.1.1 wire encryption configured for '{0}': {1}", shareName, enable));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public static bool ConfigureSmbPerformance(bool enableMultichannel, bool requireEncryption)
+        {
+            try
+            {
+                string cmd = string.Format("-NoProfile -ExecutionPolicy Bypass -Command \"Set-SmbServerConfiguration -EnableMultiChannel ${0} -EncryptData ${1} -Force\"",
+                    enableMultichannel ? "true" : "false", requireEncryption ? "true" : "false");
+                RunHiddenCommand("powershell.exe", cmd);
+                Logger.Info(string.Format("Configured SMB Server settings: Multichannel={0}, Encryption={1}", enableMultichannel, requireEncryption));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public static bool CreateShare(string shareName, string folderPath, string username, SharePermissionType permission, string description = "Shared via NetworkSharing.exe", bool requireEncryption = false)
         {
             try
             {
@@ -140,6 +166,10 @@ namespace NetworkSharing.Core
                 {
                     _appManagedShares.Add(shareName);
                     SaveAppSharesRecord();
+                    if (requireEncryption)
+                    {
+                        SetSmbEncryption(shareName, true);
+                    }
                     Logger.Security(string.Format("Successfully created SMB share '{0}' with {1} permissions.", shareName, smbPermission));
                     return true;
                 }
@@ -156,6 +186,10 @@ namespace NetworkSharing.Core
                     {
                         _appManagedShares.Add(shareName);
                         SaveAppSharesRecord();
+                        if (requireEncryption)
+                        {
+                            SetSmbEncryption(shareName, true);
+                        }
                         Logger.Security(string.Format("Successfully created SMB share '{0}' via PowerShell fallback.", shareName));
                         return true;
                     }

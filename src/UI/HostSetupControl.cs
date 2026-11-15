@@ -34,12 +34,18 @@ namespace NetworkSharing.UI
 
         private RadioButton _rbReadOnly;
         private RadioButton _rbReadWrite;
+        private CheckBox _chkEncryptSmb;
+        private CheckBox _chkMultichannel;
 
         private ModernButton _btnStartSharing;
         private ModernCard _pnlConfirmation;
         private Label _lblConfirmationDetails;
         private ModernButton _btnCopyUnc;
+        private ModernButton _btnShowQrMobile;
         private string _lastCreatedUnc = string.Empty;
+        private string _lastCreatedShareName = string.Empty;
+        private string _lastCreatedUsername = string.Empty;
+        private string _lastCreatedPassword = string.Empty;
 
         // Active Shares & Disconnect Card
         private ModernCard _cardActiveShares;
@@ -47,6 +53,13 @@ namespace NetworkSharing.UI
         private ModernButton _btnStopSelectedShare;
         private ModernButton _btnRefreshActiveShares;
         private ModernButton _btnCopySelectedUnc;
+        private ModernButton _btnShowActiveQr;
+
+        // Live Connected Sessions Card
+        private ModernCard _cardSessions;
+        private ListView _lvSessions;
+        private ModernButton _btnRefreshSessions;
+        private ModernButton _btnKickSession;
 
         public event Action ShareCreated;
 
@@ -55,6 +68,7 @@ namespace NetworkSharing.UI
             InitializeComponent();
             LoadDrives();
             RefreshActiveShares();
+            RefreshSessions();
         }
 
         private void InitializeComponent()
@@ -262,11 +276,11 @@ namespace NetworkSharing.UI
             // -------------------------------------------------------------
             // CARD 3: PERMISSIONS
             // -------------------------------------------------------------
-            _card3 = new ModernCard { Height = 125 };
+            _card3 = new ModernCard { Height = 175 };
 
             Label lblStep3 = new Label
             {
-                Text = "STEP 3: ACCESS PERMISSIONS",
+                Text = "STEP 3: ACCESS PERMISSIONS & ADVANCED OPTIONS",
                 Font = UITheme.SubHeaderFont,
                 ForeColor = UITheme.AccentColor,
                 AutoSize = true,
@@ -290,13 +304,35 @@ namespace NetworkSharing.UI
             _rbReadOnly = new RadioButton
             {
                 Text = "Read-Only  (Protected / Safe Mode – browse and copy files, but cannot modify, edit, or delete)",
-                Location = new Point(18, 78),
+                Location = new Point(18, 76),
                 Height = 30,
                 Font = UITheme.BoldFont,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 UseMnemonic = false
             };
             _card3.Controls.Add(_rbReadOnly);
+
+            _chkEncryptSmb = new CheckBox
+            {
+                Text = "🔒 Require SMB 3.1.1 Wire Encryption  (Protects all data transmitted over local Wi-Fi)",
+                Location = new Point(18, 112),
+                Height = 26,
+                Font = UITheme.SmallFont,
+                Checked = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            _card3.Controls.Add(_chkEncryptSmb);
+
+            _chkMultichannel = new CheckBox
+            {
+                Text = "⚡ Enable SMB Multichannel  (Aggregates Wi-Fi + Ethernet adapters for up to 2x speed)",
+                Location = new Point(18, 140),
+                Height = 26,
+                Font = UITheme.SmallFont,
+                Checked = true,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            _card3.Controls.Add(_chkMultichannel);
             _pnlFlow.Controls.Add(_card3);
 
             // -------------------------------------------------------------
@@ -349,7 +385,7 @@ namespace NetworkSharing.UI
                 Text = "Copy Path",
                 IconType = ButtonIcon.Copy,
                 Height = 36,
-                Width = 120,
+                Width = 110,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 BorderRadius = 6
             };
@@ -366,6 +402,30 @@ namespace NetworkSharing.UI
                 }
             };
             _pnlConfirmation.Controls.Add(_btnCopyUnc);
+
+            _btnShowQrMobile = new ModernButton
+            {
+                Text = "📱 Mobile QR Code",
+                Height = 36,
+                Width = 150,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                BorderRadius = 6,
+                IsPrimary = true
+            };
+            _btnShowQrMobile.Click += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(_lastCreatedUnc))
+                {
+                    string hostIp = NetworkManager.GetLocalIpAddress();
+                    string uri = string.Format("smb://{0}/{1}", hostIp, _lastCreatedShareName);
+                    QrCodeGenerator.ShowQrDialog(this, _lastCreatedShareName, _lastCreatedUnc, uri, _lastCreatedUsername, _lastCreatedPassword);
+                }
+                else
+                {
+                    MessageBox.Show("Please create or select an active share first.", "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            };
+            _pnlConfirmation.Controls.Add(_btnShowQrMobile);
             _pnlFlow.Controls.Add(_pnlConfirmation);
 
             // -------------------------------------------------------------
@@ -441,13 +501,107 @@ namespace NetworkSharing.UI
                 IconType = ButtonIcon.Copy,
                 Width = 140,
                 Height = 34,
-                BorderRadius = 6
+                BorderRadius = 6,
+                Margin = new Padding(0, 0, 8, 0)
             };
             _btnCopySelectedUnc.Click += OnCopySelectedUncClick;
             pnlShareActions.Controls.Add(_btnCopySelectedUnc);
 
+            _btnShowActiveQr = new ModernButton
+            {
+                Text = "📱 Mobile QR Code",
+                Width = 150,
+                Height = 34,
+                BorderRadius = 6
+            };
+            _btnShowActiveQr.Click += (s, e) =>
+            {
+                if (_lvActiveShares.SelectedItems.Count > 0)
+                {
+                    string sName = _lvActiveShares.SelectedItems[0].SubItems[0].Text;
+                    string unc = _lvActiveShares.SelectedItems[0].SubItems[2].Text;
+                    string hostIp = NetworkManager.GetLocalIpAddress();
+                    string uri = string.Format("smb://{0}/{1}", hostIp, sName);
+                    QrCodeGenerator.ShowQrDialog(this, sName, unc, uri, "ShareUser", "");
+                }
+                else
+                {
+                    MessageBox.Show("Please select an active share from the list first.", "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            };
+            pnlShareActions.Controls.Add(_btnShowActiveQr);
+
             _cardActiveShares.Controls.Add(pnlShareActions);
             _pnlFlow.Controls.Add(_cardActiveShares);
+
+            // -------------------------------------------------------------
+            // LIVE SESSIONS & CONNECTED CLIENTS CARD
+            // -------------------------------------------------------------
+            _cardSessions = new ModernCard { Height = 210 };
+
+            Label lblSessionsHdr = new Label
+            {
+                Text = "CONNECTED CLIENT COMPUTERS & LIVE SESSIONS",
+                Font = UITheme.SubHeaderFont,
+                ForeColor = UITheme.AccentColor,
+                AutoSize = true,
+                Location = new Point(18, 14),
+                UseMnemonic = false
+            };
+            _cardSessions.Controls.Add(lblSessionsHdr);
+
+            _lvSessions = new ListView
+            {
+                Location = new Point(18, 42),
+                Height = 110,
+                View = View.Details,
+                FullRowSelect = true,
+                MultiSelect = false,
+                GridLines = true,
+                Font = UITheme.RegularFont,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            _lvSessions.Columns.Add("Client IP / Computer", 180);
+            _lvSessions.Columns.Add("Connected User", 140);
+            _lvSessions.Columns.Add("Client Type", 140);
+            _lvSessions.Columns.Add("Idle Duration", 120);
+            _cardSessions.Controls.Add(_lvSessions);
+
+            FlowLayoutPanel pnlSessionActions = new FlowLayoutPanel
+            {
+                Location = new Point(18, 160),
+                Height = 40,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            _btnRefreshSessions = new ModernButton
+            {
+                Text = "Refresh Sessions",
+                IconType = ButtonIcon.Refresh,
+                Width = 150,
+                Height = 34,
+                BorderRadius = 6,
+                Margin = new Padding(0, 0, 8, 0)
+            };
+            _btnRefreshSessions.Click += (s, e) => RefreshSessions();
+            pnlSessionActions.Controls.Add(_btnRefreshSessions);
+
+            _btnKickSession = new ModernButton
+            {
+                Text = "Disconnect / Kick Client",
+                IconType = ButtonIcon.Delete,
+                Width = 190,
+                Height = 34,
+                IsDanger = true,
+                BorderRadius = 6
+            };
+            _btnKickSession.Click += OnKickSessionClick;
+            pnlSessionActions.Controls.Add(_btnKickSession);
+
+            _cardSessions.Controls.Add(pnlSessionActions);
+            _pnlFlow.Controls.Add(_cardSessions);
 
             this.Controls.Add(_pnlFlow);
         }
@@ -463,15 +617,76 @@ namespace NetworkSharing.UI
             _btnStartSharing.Width = targetWidth;
             _pnlConfirmation.Width = targetWidth;
             _cardActiveShares.Width = targetWidth;
+            _cardSessions.Width = targetWidth;
 
             // Align inner controls
             _lvDrives.Width = targetWidth - 36;
             _lvActiveShares.Width = targetWidth - 36;
+            _lvSessions.Width = targetWidth - 36;
             _txtFolderPath.Width = targetWidth - 155 - 120;
             _btnBrowseFolder.Location = new Point(targetWidth - 116, 176);
 
-            _btnCopyUnc.Location = new Point(targetWidth - 136, 42);
-            _lblConfirmationDetails.Width = targetWidth - 160;
+            _btnCopyUnc.Location = new Point(targetWidth - 280, 42);
+            _btnShowQrMobile.Location = new Point(targetWidth - 160, 42);
+            _lblConfirmationDetails.Width = targetWidth - 300;
+        }
+
+        public void RefreshSessions()
+        {
+            if (_lvSessions == null) return;
+            _lvSessions.Items.Clear();
+            List<SmbSessionInfo> sessions = SessionManager.GetActiveSessions();
+            if (sessions.Count == 0)
+            {
+                ListViewItem lvi = new ListViewItem("No active remote sessions connected.");
+                lvi.SubItems.Add("-");
+                lvi.SubItems.Add("-");
+                lvi.SubItems.Add("-");
+                lvi.ForeColor = UITheme.SubTextColor;
+                _lvSessions.Items.Add(lvi);
+            }
+            else
+            {
+                foreach (var sess in sessions)
+                {
+                    ListViewItem lvi = new ListViewItem(sess.ClientComputer);
+                    lvi.SubItems.Add(sess.UserName);
+                    lvi.SubItems.Add(sess.ClientType);
+                    lvi.SubItems.Add(sess.IdleTime);
+                    lvi.Tag = sess;
+                    _lvSessions.Items.Add(lvi);
+                }
+            }
+        }
+
+        private void OnKickSessionClick(object sender, EventArgs e)
+        {
+            if (_lvSessions.SelectedItems.Count == 0 || _lvSessions.SelectedItems[0].Tag == null)
+            {
+                MessageBox.Show("Please select an active connected client from the list to disconnect.", "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            SmbSessionInfo sess = _lvSessions.SelectedItems[0].Tag as SmbSessionInfo;
+            if (sess == null) return;
+
+            DialogResult dr = MessageBox.Show(
+                string.Format("Are you sure you want to disconnect client '{0}' (User: {1})?", sess.ClientComputer, sess.UserName),
+                "Confirm Disconnect", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (dr == DialogResult.Yes)
+            {
+                bool ok = SessionManager.DisconnectSession(sess.ClientComputer);
+                RefreshSessions();
+                if (ok)
+                {
+                    MessageBox.Show("Client session terminated successfully.", "Disconnected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else
+                {
+                    MessageBox.Show("Could not disconnect client session. Administrator elevation may be required.", "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
         }
 
         public void RefreshActiveShares()
@@ -643,6 +858,7 @@ namespace NetworkSharing.UI
             string confirm = _txtConfirmPassword.Text;
             string desc = _txtDescription.Text.Trim();
             SharePermissionType perm = _rbReadWrite.Checked ? SharePermissionType.ReadWrite : SharePermissionType.ReadOnly;
+            bool encrypt = _chkEncryptSmb.Checked;
 
             // 1. Validations
             var pathVal = SecurityValidator.ValidatePath(path);
@@ -725,7 +941,7 @@ namespace NetworkSharing.UI
                     }
                     RollbackManager.PushFirewallRuleCreated(FirewallManager.RuleName);
 
-                    if (!ShareManager.CreateShare(shareName, path, user, perm, desc))
+                    if (!ShareManager.CreateShare(shareName, path, user, perm, desc, encrypt))
                     {
                         this.BeginInvoke(new Action(() =>
                         {
@@ -741,6 +957,9 @@ namespace NetworkSharing.UI
 
                     string hostIp = NetworkManager.GetLocalIpAddress();
                     _lastCreatedUnc = string.Format(@"\\{0}\{1}", hostIp, shareName);
+                    _lastCreatedShareName = shareName;
+                    _lastCreatedUsername = user;
+                    _lastCreatedPassword = pass;
 
                     this.BeginInvoke(new Action(() =>
                     {

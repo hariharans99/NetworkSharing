@@ -1,0 +1,41 @@
+name: Build and Verify NetworkSharing
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Compile NetworkSharing.exe
+      shell: cmd
+      run: |
+        build.bat
+
+    - name: Run Built-in Automated Test Suite
+      shell: powershell
+      run: |
+        $proc = Start-Process .\NetworkSharing.exe -ArgumentList "--test" -NoNewWindow -Wait -PassThru
+        if ($proc.ExitCode -ne 0) {
+            Write-Error "Test suite failed with exit code $($proc.ExitCode)"
+            exit $proc.ExitCode
+        }
+        Write-Host "All automated tests passed successfully."
+
+    - name: Calculate SHA-256 Checksum
+      shell: powershell
+      run: |
+        Get-FileHash -Path .\NetworkSharing.exe -Algorithm SHA256 | Format-List
+
+    - name: Upload Binary Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: NetworkSharing-Release
+        path: NetworkSharing.exe
