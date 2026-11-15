@@ -4,6 +4,7 @@
 *.bak
 *.tmp
 *.log
+NetworkSharing_old_*.exe
 journal.txt
 app_shares.txt
 
