@@ -22,15 +22,16 @@ namespace NetworkSharing.Core
         public int ErrorCode { get; set; }
         public string Message { get; set; }
         public string RecoveryTip { get; set; }
+        public bool IsCredentialConflict { get; set; }
 
         public static MappingResult Ok(string message)
         {
-            return new MappingResult { Success = true, ErrorCode = 0, Message = message, RecoveryTip = string.Empty };
+            return new MappingResult { Success = true, ErrorCode = 0, Message = message, RecoveryTip = string.Empty, IsCredentialConflict = false };
         }
 
-        public static MappingResult Fail(int errorCode, string message, string tip)
+        public static MappingResult Fail(int errorCode, string message, string tip, bool isConflict = false)
         {
-            return new MappingResult { Success = false, ErrorCode = errorCode, Message = message, RecoveryTip = tip };
+            return new MappingResult { Success = false, ErrorCode = errorCode, Message = message, RecoveryTip = tip, IsCredentialConflict = isConflict };
         }
     }
 
@@ -148,14 +149,14 @@ namespace NetworkSharing.Core
                 // Explicit Error 1219 Handling: Session Credential Conflict
                 if (result == ERROR_SESSION_CREDENTIAL_CONFLICT)
                 {
-                    Logger.Warning("Windows Error 1219 (Multiple credentials for same server). Attempting session reset...");
+                    Logger.Warning("Windows Error 1219 (Multiple credentials for same server). Attempting automatic session reset...");
                     string serverRoot = ExtractServerRoot(remotePath);
                     if (!string.IsNullOrEmpty(serverRoot))
                     {
-                        WNetCancelConnection2(serverRoot, 0, true);
+                        ResetServerSession(serverRoot);
                     }
 
-                    // Retry once after server session disconnect
+                    // Retry once after server session disconnect and ticket flush
                     result = WNetAddConnection2(ref nr, password, username, flags);
                     if (result == NO_ERROR)
                     {
@@ -165,22 +166,31 @@ namespace NetworkSharing.Core
 
                     return MappingResult.Fail(1219,
                         "Windows error 1219: An existing connection to this server exists under different credentials.",
-                        "Disconnect existing connections to this server in File Explorer or click 'Disconnect All' before reconnecting.");
+                        "Click 'Clear Old Credentials & Reset' to purge lingering sessions, then reconnect.",
+                        isConflict: true);
                 }
 
                 if (result == ERROR_LOGON_FAILURE || result == ERROR_INVALID_PASSWORD)
                 {
-                    return MappingResult.Fail(result, "Authentication failed: Unknown username or incorrect password.", "Verify the sharing username and password configured on the host PC.");
+                    return MappingResult.Fail(result,
+                        "Authentication failed: Unknown username or incorrect password.",
+                        "If username or password was recently changed on the host PC, click 'Clear Old Credentials & Reset' to wipe stale logins.",
+                        isConflict: true);
                 }
 
                 if (result == ERROR_BAD_NETPATH || result == ERROR_BAD_NET_NAME)
                 {
-                    return MappingResult.Fail(result, "Network path not found or share does not exist.", "Verify the host IP, computer name, and that the share is active on the host.");
+                    return MappingResult.Fail(result,
+                        "Network path not found or share does not exist.",
+                        "Verify the host IP, computer name, and that the share is active on the host.");
                 }
 
                 if (result == ERROR_ACCESS_DENIED)
                 {
-                    return MappingResult.Fail(result, "Access Denied by host.", "The host PC refused connection. Ensure permissions on the share grant access to this user.");
+                    return MappingResult.Fail(result,
+                        "Access Denied by host. Check permissions or administrator access.",
+                        "If credentials were changed, click 'Clear Old Credentials & Reset' to purge cached tokens.",
+                        isConflict: true);
                 }
 
                 return MappingResult.Fail(result, "Windows network error: " + result, "Check network connection and firewall settings.");
@@ -334,5 +344,131 @@ namespace NetworkSharing.Core
 
         [DllImport("mpr.dll", CharSet = CharSet.Unicode)]
         private static extern int WNetGetConnection(string lpLocalName, StringBuilder lpRemoteName, ref int lpnLength);
+
+        /// <summary>
+        /// Forcibly closes all open SMB session handles, tree connects, IPC$ pipes,
+        /// and purges cached credentials and NTLM/Kerberos ticket tokens for a specific target host.
+        /// Resolves Windows Error 1219, Error 1326, and "Access Denied" after username/password changes.
+        /// </summary>
+        public static bool ResetServerSession(string targetHostOrIp)
+        {
+            string dummy;
+            return ResetServerSession(targetHostOrIp, out dummy);
+        }
+
+        public static bool ResetServerSession(string targetHostOrIp, out string details)
+        {
+            StringBuilder sb = new StringBuilder();
+            if (string.IsNullOrWhiteSpace(targetHostOrIp))
+            {
+                details = "Target host is empty.";
+                return false;
+            }
+
+            try
+            {
+                string cleanHost = targetHostOrIp.Trim().TrimStart('\\');
+                int slash = cleanHost.IndexOf('\\');
+                if (slash > 0) cleanHost = cleanHost.Substring(0, slash);
+
+                Logger.Info("Initiating deep SMB session & credential purge for: " + cleanHost);
+
+                string serverRoot = @"\\" + cleanHost;
+
+                // 1. Cancel WNet tree connects and IPC$ handles
+                try
+                {
+                    WNetCancelConnection2(serverRoot + @"\IPC$", 0, true);
+                    WNetCancelConnection2(serverRoot, 0, true);
+                    sb.AppendLine("Closed Win32 WNet IPC$ and server handles.");
+                }
+                catch { }
+
+                // 2. Disconnect any mapped drives pointing to this host
+                var mapped = GetMappedDrives();
+                foreach (var md in mapped)
+                {
+                    if (md.RemotePath.IndexOf(cleanHost, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        UnmapDrive(md.DriveLetter);
+                        sb.AppendLine(string.Format("Unmapped drive {0} -> {1}", md.DriveLetter, md.RemotePath));
+                    }
+                }
+
+                // 3. Forcibly close CLI sessions via net.exe use
+                try
+                {
+                    RunHiddenCommand("net.exe", string.Format("use \"{0}\" /delete /y", serverRoot));
+                    RunHiddenCommand("net.exe", string.Format("use \"{0}\\IPC$\" /delete /y", serverRoot));
+                    sb.AppendLine("Executed 'net use /delete' on server sessions.");
+                }
+                catch { }
+
+                // 4. Purge Kerberos & NTLM ticket cache
+                try
+                {
+                    RunHiddenCommand("klist.exe", "purge");
+                    sb.AppendLine("Purged Kerberos & NTLM ticket tokens via klist.");
+                }
+                catch { }
+
+                // 5. Purge Windows Credential Manager and DPAPI vault entries
+                int credsPurged = CredentialManager.PurgeTargetCredentials(cleanHost);
+                sb.AppendLine(string.Format("Purged {0} cached credential(s) from Windows Vault.", credsPurged));
+
+                details = sb.ToString().Trim();
+                Logger.Security("Completed session & credential reset for " + cleanHost);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                details = "Error during session purge: " + ex.Message;
+                Logger.Error("Exception in ResetServerSession for " + targetHostOrIp, ex);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Clears all mapped drives, flushes all SMB network sessions (net use * /delete /y),
+        /// purges ticket tokens, and wipes application credential cache.
+        /// </summary>
+        public static bool ResetAllNetworkSessions()
+        {
+            try
+            {
+                Logger.Info("Performing complete reset of all local network drive mappings and sessions...");
+                DisconnectAll();
+                RunHiddenCommand("net.exe", "use * /delete /y");
+                RunHiddenCommand("klist.exe", "purge");
+                CredentialManager.PurgeAllNetworkCredentials();
+                Logger.Security("All network sessions and cached credentials have been reset.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Exception resetting all network sessions", ex);
+                return false;
+            }
+        }
+
+        private static int RunHiddenCommand(string exe, string args)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo(exe, args)
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using (Process p = Process.Start(psi))
+                {
+                    p.WaitForExit(4000);
+                    return p.ExitCode;
+                }
+            }
+            catch { return -1; }
+        }
     }
 }

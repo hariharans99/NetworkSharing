@@ -180,6 +180,102 @@ namespace NetworkSharing.Core
             return winCredDeleted || dpapiDeleted;
         }
 
+        /// <summary>
+        /// Searches and purges all stored credentials matching a target IP, hostname,
+        /// or UNC network share from both Windows Credential Manager and the DPAPI vault.
+        /// Resolves issues when credentials change on the host PC.
+        /// </summary>
+        public static int PurgeTargetCredentials(string targetHostOrIp)
+        {
+            if (string.IsNullOrWhiteSpace(targetHostOrIp)) return 0;
+
+            int deletedCount = 0;
+            string clean = targetHostOrIp.Trim().TrimStart('\\');
+            int slash = clean.IndexOf('\\');
+            if (slash > 0) clean = clean.Substring(0, slash);
+
+            HashSet<string> targetsToTry = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                targetHostOrIp.Trim(),
+                clean,
+                @"\\" + clean,
+                clean + @"\"
+            };
+
+            try
+            {
+                string resolved = NetworkManager.ResolveHostname(clean);
+                if (!string.IsNullOrEmpty(resolved) && !targetsToTry.Contains(resolved))
+                {
+                    targetsToTry.Add(resolved);
+                    targetsToTry.Add(@"\\" + resolved);
+                }
+            }
+            catch { }
+
+            foreach (string t in targetsToTry)
+            {
+                try
+                {
+                    // Generic credential (Type 1)
+                    if (CredDelete(t, CRED_TYPE_GENERIC, 0))
+                    {
+                        deletedCount++;
+                        Logger.Security("Purged generic credential for: " + t);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    // Domain password (Type 2)
+                    if (CredDelete(t, 2, 0))
+                    {
+                        deletedCount++;
+                        Logger.Security("Purged domain credential for: " + t);
+                    }
+                }
+                catch { }
+
+                // Also purge from DPAPI vault
+                if (DeleteFromDpapiVault(t))
+                {
+                    deletedCount++;
+                }
+            }
+
+            Logger.Info(string.Format("Purged {0} cached credential(s) for host {1}.", deletedCount, clean));
+            return deletedCount;
+        }
+
+        /// <summary>
+        /// Clears all credentials stored by NetworkSharing in the DPAPI vault and Windows Credential Manager.
+        /// </summary>
+        public static int PurgeAllNetworkCredentials()
+        {
+            int count = 0;
+            lock (_vaultLock)
+            {
+                try
+                {
+                    var vault = LoadVaultData();
+                    count = vault.Count;
+                    foreach (var key in vault.Keys)
+                    {
+                        try { CredDelete(key, CRED_TYPE_GENERIC, 0); } catch { }
+                        try { CredDelete(key, 2, 0); } catch { }
+                    }
+                    if (File.Exists(VaultFilePath))
+                    {
+                        File.Delete(VaultFilePath);
+                    }
+                    Logger.Security(string.Format("Purged all {0} network credentials from vault.", count));
+                }
+                catch { }
+            }
+            return count;
+        }
+
         private static bool SaveToDpapiVault(string target, string userName, string password)
         {
             lock (_vaultLock)

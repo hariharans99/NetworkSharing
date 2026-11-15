@@ -60,6 +60,7 @@ namespace NetworkSharing.UI
         private ListView _lvSessions;
         private ModernButton _btnRefreshSessions;
         private ModernButton _btnKickSession;
+        private ModernButton _btnFlushSessions;
 
         public event Action ShareCreated;
 
@@ -600,6 +601,19 @@ namespace NetworkSharing.UI
             _btnKickSession.Click += OnKickSessionClick;
             pnlSessionActions.Controls.Add(_btnKickSession);
 
+            _btnFlushSessions = new ModernButton
+            {
+                Text = "🔌 Disconnect ALL Old Devices",
+                IconType = ButtonIcon.Delete,
+                Width = 235,
+                Height = 34,
+                IsDanger = true,
+                BorderRadius = 6,
+                Margin = new Padding(8, 0, 0, 0)
+            };
+            _btnFlushSessions.Click += OnFlushSessionsClick;
+            pnlSessionActions.Controls.Add(_btnFlushSessions);
+
             _cardSessions.Controls.Add(pnlSessionActions);
             _pnlFlow.Controls.Add(_cardSessions);
 
@@ -686,6 +700,22 @@ namespace NetworkSharing.UI
                 {
                     MessageBox.Show("Could not disconnect client session. Administrator elevation may be required.", "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
+            }
+        }
+
+        private void OnFlushSessionsClick(object sender, EventArgs e)
+        {
+            DialogResult dr = MessageBox.Show(
+                "Are you sure you want to forcibly disconnect all connected remote client computers?\n\n" +
+                "Use this after updating your username or password so other computers can reconnect immediately with the new credentials without getting Error 1219 / 1326.",
+                "Disconnect All Connected Devices", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+            if (dr == DialogResult.Yes)
+            {
+                int count = SessionManager.FlushAllActiveSessions();
+                RefreshSessions();
+                MessageBox.Show(string.Format("Successfully disconnected all remote device sessions ({0} session(s) closed).\n\nOther computers can now connect cleanly using your updated username and password.", count),
+                    "Device Sessions Cleared", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 

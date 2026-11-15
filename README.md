@@ -1,7 +1,7 @@
 # NetworkSharing.exe – Windows Network Drive & Folder Sharing Manager
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)](https://github.com/hariharans99/NetworkSharing)
-[![Tests](https://img.shields.io/badge/tests-23%2F23%20passed-brightgreen.svg)](https://github.com/hariharans99/NetworkSharing)
+[![Tests](https://img.shields.io/badge/tests-24%2F24%20passed-brightgreen.svg)](https://github.com/hariharans99/NetworkSharing)
 [![Architecture](https://img.shields.io/badge/arch-x64-orange.svg)](https://github.com/hariharans99/NetworkSharing)
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-blueviolet.svg)](https://github.com/hariharans99/NetworkSharing/actions)
 [![Framework](https://img.shields.io/badge/.NET-Framework%204.5%2B%20%2F%20Native-purple.svg)](https://github.com/hariharans99/NetworkSharing)
@@ -12,7 +12,9 @@ A production-grade, secure, lightweight Windows desktop application designed to 
 
 ## ⚡ Highlights
 
-* **Single Standalone Executable:** Zero installation and zero external dependencies required (191 KB self-contained).
+* **Single Standalone Executable:** Zero installation and zero external dependencies required (206 KB self-contained).
+* **🧹 1-Click Clear Old Credentials & Reset Network Sessions:** Eliminates Windows Error 1219 (Multiple Credential Conflict), Error 1326 (Logon Failure), and Error 5 (Access Denied) when usernames or passwords change on the host PC. Forcibly tears down stale `IPC$` handles, purges Windows Credential Manager entries, flushes Kerberos/NTLM ticket caches (`klist purge`), and reconnects cleanly.
+* **🔌 Host-Side "Disconnect ALL Old Devices":** Kicks all active remote client sessions at once after updating passwords, forcing all connected devices to re-authenticate cleanly without credential conflicts.
 * **⚡ 30-Second iPerf3 Continuous Speed Benchmark:** Connect 2 computers directly by IP address (e.g. `192.168.137.62`) and stream raw physical TCP packets over port `52010` for 10s, 30s, or 60s with a live 1-second interval scrolling console (upload speed, download speed, total data, and throughput in Mbps/Gbps) — zero Windows credentials or disk permissions needed.
 * **📱 Mobile Phone QR Code Sharing:** Built-in vector QR code generator for instant connection from iPhone (*Files* app) and Android devices without typing IPs or passwords.
 * **👥 Live Connected Clients Monitor:** Real-time visibility into active remote computers, connected users, and idle durations with a 1-click **Disconnect / Kick Client** button.
@@ -130,6 +132,7 @@ Run the built-in automated verification tests from the command line:
 | **PASS** | Security | Security Descriptor SDDL Backup Capture | Verified |
 | **PASS** | Security | Reparse Point & Symlink Safety Check | Blocked |
 | **PASS** | Integration | Windows Credential Manager Save, Retrieve & Delete | Verified |
+| **PASS** | Integration | Target Credential Purge & Session Reset Engine | Verified |
 | **PASS** | Functional | Drive Detector Enumeration & System Flag | Verified |
 | **PASS** | Functional | Local Network IP Resolution | Verified |
 | **PASS** | Functional | Speed Test Format Unit Toggle Conversion | Verified |
@@ -144,8 +147,8 @@ Run the built-in automated verification tests from the command line:
 ## 📦 Binary Release Manifest
 
 * **File Name:** `NetworkSharing.exe`
-* **Size:** `195,584 bytes` (195.6 KB)
+* **Size:** `206,848 bytes` (206.8 KB)
 * **Architecture:** `x64`
 * **Target Runtime:** .NET Framework 4.5+ / Windows 10 & 11 native
-* **SHA-256 Checksum:** `24B2F8DEB7417B70A326FE4BA9D0248C935ED80A408AAAECB0A7758C0AFDC1E9`
+* **SHA-256 Checksum:** `50B6459FC4BBCD07E3293A08C4E328923895A3C14E0BB3E34F6CC73C87529D5C`
 

@@ -149,6 +149,27 @@ namespace NetworkSharing.Tests
                 }
             });
 
+            RunTest(results, "Integration", "Target Credential Purge & Session Reset Engine", () =>
+            {
+                string purgeHost = "PurgeTestHost_" + Guid.NewGuid().ToString("N").Substring(0, 6);
+                try
+                {
+                    CredentialManager.SaveCredential(purgeHost, "TestUser", "TempPass123!");
+                    Assert(CredentialManager.GetCredential(purgeHost) != null, "Saved credential must exist prior to purge.");
+
+                    string purgeDetails;
+                    bool resetOk = DriveMapper.ResetServerSession(purgeHost, out purgeDetails);
+                    Assert(resetOk, "ResetServerSession must execute cleanly.");
+
+                    var postPurge = CredentialManager.GetCredential(purgeHost);
+                    Assert(postPurge == null, "Credential must be purged from vault after ResetServerSession.");
+                }
+                finally
+                {
+                    CredentialManager.DeleteCredential(purgeHost);
+                }
+            });
+
             // --- 3. DRIVE DETECTOR & NETWORKING TESTS ---
             RunTest(results, "Functional", "Drive Detector Enumeration", () =>
             {

@@ -27,6 +27,7 @@ namespace NetworkSharing.UI
         private TextBox _txtPass;
         private CheckBox _chkShowPass;
         private CheckBox _chkRemember;
+        private ModernButton _btnClearOldCreds;
 
         private ModernButton _btnBrowseShares;
         private ComboBox _cmbShares;
@@ -43,6 +44,7 @@ namespace NetworkSharing.UI
         private ListView _lvMappedDrives;
         private ModernButton _btnDisconnectDrive;
         private ModernButton _btnDisconnectAllDrives;
+        private ModernButton _btnResetAllSessions;
         private ModernButton _btnRefreshMapped;
 
         public event Action DriveMapped;
@@ -174,7 +176,7 @@ namespace NetworkSharing.UI
             // -------------------------------------------------------------
             // CARD 2: AUTHENTICATION
             // -------------------------------------------------------------
-            _card2 = new ModernCard { Height = 145 };
+            _card2 = new ModernCard { Height = 185 };
 
             Label lblStep2 = new Label
             {
@@ -189,9 +191,9 @@ namespace NetworkSharing.UI
             TableLayoutPanel gridAuth = new TableLayoutPanel
             {
                 Location = new Point(18, 44),
-                Height = 85,
+                Height = 125,
                 ColumnCount = 3,
-                RowCount = 3,
+                RowCount = 4,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             gridAuth.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
@@ -221,6 +223,40 @@ namespace NetworkSharing.UI
             };
             gridAuth.Controls.Add(_chkRemember, 1, 2);
             gridAuth.SetColumnSpan(_chkRemember, 2);
+
+            // Row 3: Clear Old Device Credentials & Reset Button
+            FlowLayoutPanel pnlPurge = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Margin = new Padding(0, 4, 0, 0)
+            };
+
+            _btnClearOldCreds = new ModernButton
+            {
+                Text = "🧹 Clear Old Credentials & Reset Session",
+                Width = 275,
+                Height = 28,
+                BorderRadius = 6,
+                Margin = new Padding(0, 0, 10, 0)
+            };
+            _btnClearOldCreds.Click += OnClearOldCredsClick;
+            pnlPurge.Controls.Add(_btnClearOldCreds);
+
+            Label lblPurgeTip = new Label
+            {
+                Text = "← Click if username or password was changed on the host PC",
+                Font = UITheme.SmallFont,
+                ForeColor = UITheme.SubTextColor,
+                Tag = "SubText",
+                AutoSize = true,
+                Margin = new Padding(0, 6, 0, 0)
+            };
+            pnlPurge.Controls.Add(lblPurgeTip);
+
+            gridAuth.Controls.Add(pnlPurge, 1, 3);
+            gridAuth.SetColumnSpan(pnlPurge, 2);
 
             _card2.Controls.Add(gridAuth);
             _pnlFlow.Controls.Add(_card2);
@@ -426,6 +462,18 @@ namespace NetworkSharing.UI
             };
             _btnDisconnectAllDrives.Click += OnDisconnectAllDrivesClick;
             pnlDriveActions.Controls.Add(_btnDisconnectAllDrives);
+
+            _btnResetAllSessions = new ModernButton
+            {
+                Text = "🧹 Reset ALL Sessions & Keys",
+                Width = 230,
+                Height = 34,
+                IsDanger = true,
+                BorderRadius = 6,
+                Margin = new Padding(0, 0, 8, 0)
+            };
+            _btnResetAllSessions.Click += OnResetAllSessionsClick;
+            pnlDriveActions.Controls.Add(_btnResetAllSessions);
 
             _btnRefreshMapped = new ModernButton
             {
@@ -712,6 +760,30 @@ namespace NetworkSharing.UI
                         RefreshMappedDrives();
                         if (DriveMapped != null) DriveMapped();
                     }
+                    else if (mapResult.IsCredentialConflict)
+                    {
+                        string conflictMsg = string.Format(
+                            "Windows Credential & Session Conflict Detected (Error {0})!\n\n" +
+                            "Reason: {1}\n\n" +
+                            "Why this happens:\n" +
+                            "Windows has cached an older session, username, or password for '{2}'. Even if you updated credentials on the host PC, the Windows kernel holds onto the old session tokens.\n\n" +
+                            "Would you like to automatically purge the old cached credentials & reset the network session now, then reconnect?",
+                            mapResult.ErrorCode, mapResult.Message, host);
+
+                        DialogResult drConflict = MessageBox.Show(conflictMsg, "Credentials Conflict Detected", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+                        if (drConflict == DialogResult.Yes)
+                        {
+                            string purgeDetails;
+                            DriveMapper.ResetServerSession(host, out purgeDetails);
+                            if (remember && !string.IsNullOrEmpty(user) && !string.IsNullOrEmpty(pass))
+                            {
+                                CredentialManager.SaveCredential(host, user, pass);
+                            }
+                            OnConnectAndMapClick(sender, e);
+                            return;
+                        }
+                    }
                     else
                     {
                         string errorMsg = string.Format("Could not map drive letter {0}.\n\nReason: {1}\n\nTip: {2}\n\nWould you like to open the network folder directly in File Explorer without a drive letter?",
@@ -726,6 +798,69 @@ namespace NetworkSharing.UI
                     }
                 }));
             });
+        }
+
+        private void OnClearOldCredsClick(object sender, EventArgs e)
+        {
+            string host = _txtHost.Text.Trim();
+            if (string.IsNullOrEmpty(host))
+            {
+                MessageBox.Show("Please enter a host IP address or computer name in Step 1 first.", "Host Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            DialogResult dr = MessageBox.Show(
+                string.Format("Are you sure you want to clear all cached credentials, open SMB sessions, and ticket tokens for '{0}'?\n\n" +
+                              "This will:\n" +
+                              "• Delete stored logins in Windows Credential Manager for {0}\n" +
+                              "• Forcibly disconnect existing SMB sessions and IPC$ handles\n" +
+                              "• Purge Kerberos and NTLM session tokens (klist purge)\n\n" +
+                              "Use this whenever the username or password was changed on the host PC so you can connect cleanly with your new credentials.", host),
+                "Clear Old Device Credentials", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+            if (dr == DialogResult.Yes)
+            {
+                string details;
+                bool ok = DriveMapper.ResetServerSession(host, out details);
+                _txtPass.Clear();
+
+                if (ok)
+                {
+                    _lblConnStatus.Text = string.Format("✔ Old credentials & sessions cleared for {0}. Ready for fresh login.", host);
+                    _lblConnStatus.ForeColor = UITheme.SuccessColor;
+                    MessageBox.Show(string.Format("All old cached credentials and sessions for '{0}' have been completely wiped.\n\nYou can now enter the new username and password and click 'Connect & Map Drive'.", host),
+                        "Credentials & Sessions Cleared", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else
+                {
+                    MessageBox.Show("Notice during credential purge:\n" + details, "Notice", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
+        private void OnResetAllSessionsClick(object sender, EventArgs e)
+        {
+            DialogResult dr = MessageBox.Show(
+                "Are you sure you want to perform a COMPLETE RESET of ALL network sessions?\n\n" +
+                "This will:\n" +
+                "• Disconnect all mapped network drives\n" +
+                "• Terminate all SMB sessions to all servers (net use * /delete /y)\n" +
+                "• Flush Kerberos and NTLM ticket cache (klist purge)\n" +
+                "• Clear all application-managed network credentials\n\n" +
+                "Do you wish to proceed?",
+                "Complete Network Sessions Reset", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (dr == DialogResult.Yes)
+            {
+                DriveMapper.ResetAllNetworkSessions();
+                RefreshMappedDrives();
+                LoadDriveLetters();
+                _txtPass.Clear();
+                _lblConnStatus.Text = "● All network sessions and credentials have been reset.";
+                _lblConnStatus.ForeColor = UITheme.SuccessColor;
+                MessageBox.Show("All network sessions, mapped drives, and cached credentials have been reset successfully.",
+                    "Reset Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
     }
 }

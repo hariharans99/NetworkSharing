@@ -183,6 +183,33 @@ namespace NetworkSharing.Core
             return false;
         }
 
+        /// <summary>
+        /// Flushes all active remote sessions connected to this host.
+        /// Useful when the host changes passwords or usernames, forcing all connected clients to re-authenticate cleanly.
+        /// </summary>
+        public static int FlushAllActiveSessions()
+        {
+            int count = 0;
+            try
+            {
+                var sessions = GetActiveSessions();
+                count = sessions.Count;
+
+                foreach (var s in sessions)
+                {
+                    DisconnectSession(s.ClientComputer);
+                }
+
+                RunHiddenCommand("net.exe", "session /delete /y");
+                Logger.Security(string.Format("Flushed all active SMB sessions on host ({0} session(s) disconnected).", count));
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning("Error flushing active sessions: " + ex.Message);
+            }
+            return count;
+        }
+
         private static int RunHiddenCommand(string exe, string args)
         {
             try
