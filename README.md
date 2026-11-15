@@ -145,5 +145,5 @@ Run the built-in automated verification tests from the command line:
 * **Size:** `181,760 bytes` (181.8 KB)
 * **Architecture:** `x64`
 * **Target Runtime:** .NET Framework 4.5+ / Windows 10 & 11 native
-* **SHA-256 Checksum:** `547D9814AE313B84ABD6DAA4621CFF65507D0086192F84F9F38BF4B82FCF8712`
+* **SHA-256 Checksum:** `20A5731D60CBF72803DFA29E04DB46EECE6C7E987B83A5F777DFF7BFFCB562E3`
 
