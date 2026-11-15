@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NetworkSharing.Logging;
@@ -324,34 +325,77 @@ namespace NetworkSharing.Core
 
             target = target.Trim();
 
-            // 1. Determine if target is a network path/drive or a host IP
+            // 1. Direct Drive or UNC Path (e.g. Z:, \\192.168.0.128\Drive_D)
             string testDir = null;
-            bool isDriveOrShare = false;
-
             if (target.Length == 2 && target.EndsWith(":"))
             {
                 testDir = target + "\\";
-                isDriveOrShare = Directory.Exists(testDir);
             }
             else if (target.StartsWith("\\\\"))
             {
                 testDir = target;
-                isDriveOrShare = Directory.Exists(testDir);
             }
             else if (Directory.Exists(target))
             {
                 testDir = target;
-                isDriveOrShare = true;
             }
 
-            if (isDriveOrShare && testDir != null)
+            if (testDir != null && Directory.Exists(testDir))
             {
                 return RunFileShareSpeedTest(testDir, payloadMb, progressCallback);
             }
+
+            // 2. Raw IP or Hostname: Auto-resolve to active SMB share for real physical file transfer
+            string hostIp = target.TrimStart('\\');
+            int slashIdx = hostIp.IndexOf('\\');
+            if (slashIdx > 0) hostIp = hostIp.Substring(0, slashIdx);
+
+            string localIp = GetLocalIpAddress();
+            string resolvedSharePath = null;
+
+            if (hostIp == localIp || hostIp.Equals("127.0.0.1") || hostIp.Equals("localhost", StringComparison.OrdinalIgnoreCase) || hostIp.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+            {
+                var localShares = ShareManager.GetActiveShares();
+                if (localShares.Count > 0)
+                {
+                    resolvedSharePath = string.Format(@"\\{0}\{1}", localIp, localShares[0].ShareName);
+                }
+            }
             else
             {
-                return RunSocketSpeedTest(target, payloadMb, progressCallback);
+                // Query remote shares
+                try
+                {
+                    var remoteShares = ShareManager.GetRemoteShares(hostIp);
+                    if (remoteShares != null && remoteShares.Count > 0)
+                    {
+                        resolvedSharePath = string.Format(@"\\{0}\{1}", hostIp, remoteShares[0]);
+                    }
+                }
+                catch { }
             }
+
+            if (!string.IsNullOrEmpty(resolvedSharePath) && Directory.Exists(resolvedSharePath))
+            {
+                Logger.Info("Auto-resolved host to active SMB share for real physical transfer: " + resolvedSharePath);
+                return RunFileShareSpeedTest(resolvedSharePath, payloadMb, progressCallback);
+            }
+
+            // 3. Check if Peer-to-Peer Speed Server is listening on the target
+            if (TestSpeedServerPort(hostIp))
+            {
+                Logger.Info("Connecting to Peer-to-Peer High-Speed TCP Daemon on " + hostIp + ":" + SpeedTestPort);
+                return RunRealTcpSpeedBenchmark(hostIp, payloadMb, progressCallback);
+            }
+
+            // 4. Return clear error explaining what to target
+            result.Success = false;
+            result.ErrorMessage = string.Format(
+                "Cannot perform real speed benchmark on '{0}'.\r\n\r\n" +
+                "To measure actual transfer speed:\r\n" +
+                "• Specify a shared folder (e.g. \\\\{0}\\Drive_D or mapped drive Z:), OR\r\n" +
+                "• Ensure NetworkSharing.exe is open on the second PC for instant peer-to-peer TCP speed testing.", hostIp);
+            return result;
         }
 
         private static SpeedTestResult RunFileShareSpeedTest(string targetDir, int payloadMb, Action<SpeedTestProgress> progressCallback)
@@ -472,83 +516,245 @@ namespace NetworkSharing.Core
             return result;
         }
 
-        private static SpeedTestResult RunSocketSpeedTest(string host, int payloadMb, Action<SpeedTestProgress> progressCallback)
+        public const int SpeedTestPort = 52010;
+        private static TcpListener _speedServer;
+        private static bool _speedServerRunning = false;
+
+        static NetworkManager()
+        {
+            StartSpeedServer();
+        }
+
+        public static void StartSpeedServer()
+        {
+            if (_speedServerRunning) return;
+            try
+            {
+                _speedServer = new TcpListener(IPAddress.Any, SpeedTestPort);
+                _speedServer.Start();
+                _speedServerRunning = true;
+                Logger.Info("Peer-to-Peer High-Speed TCP Benchmark Server active on port " + SpeedTestPort);
+
+                Thread th = new Thread(SpeedServerLoop)
+                {
+                    IsBackground = true,
+                    Name = "SpeedServerThread"
+                };
+                th.Start();
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning("Could not start Speed Server on port " + SpeedTestPort + ": " + ex.Message);
+            }
+        }
+
+        private static void SpeedServerLoop()
+        {
+            while (_speedServerRunning && _speedServer != null)
+            {
+                try
+                {
+                    TcpClient client = _speedServer.AcceptTcpClient();
+                    ThreadPool.QueueUserWorkItem((state) => HandleSpeedClient((TcpClient)state), client);
+                }
+                catch
+                {
+                    break;
+                }
+            }
+        }
+
+        private static void HandleSpeedClient(TcpClient client)
+        {
+            try
+            {
+                using (client)
+                {
+                    client.NoDelay = true;
+                    client.SendBufferSize = 64 * 1024;
+                    client.ReceiveBufferSize = 64 * 1024;
+
+                    using (NetworkStream ns = client.GetStream())
+                    {
+                        byte[] cmdBuf = new byte[64];
+                        int read = ns.Read(cmdBuf, 0, cmdBuf.Length);
+                        if (read <= 0) return;
+                        string cmd = Encoding.ASCII.GetString(cmdBuf, 0, read).Trim();
+
+                        if (cmd.StartsWith("UP "))
+                        {
+                            long bytesExpected = long.Parse(cmd.Substring(3));
+                            byte[] discardBuf = new byte[64 * 1024];
+                            long received = 0;
+                            while (received < bytesExpected)
+                            {
+                                int r = ns.Read(discardBuf, 0, (int)Math.Min(discardBuf.Length, bytesExpected - received));
+                                if (r <= 0) break;
+                                received += r;
+                            }
+                            byte[] ack = Encoding.ASCII.GetBytes("OK\n");
+                            ns.Write(ack, 0, ack.Length);
+                        }
+                        else if (cmd.StartsWith("DOWN "))
+                        {
+                            long bytesToSend = long.Parse(cmd.Substring(5));
+                            byte[] dataBuf = new byte[64 * 1024];
+                            long sent = 0;
+                            while (sent < bytesToSend)
+                            {
+                                int toSend = (int)Math.Min(dataBuf.Length, bytesToSend - sent);
+                                ns.Write(dataBuf, 0, toSend);
+                                sent += toSend;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        public static bool TestSpeedServerPort(string host, int timeoutMs = 1200)
+        {
+            try
+            {
+                using (TcpClient client = new TcpClient())
+                {
+                    IAsyncResult ar = client.BeginConnect(host, SpeedTestPort, null, null);
+                    bool ok = ar.AsyncWaitHandle.WaitOne(timeoutMs);
+                    if (ok)
+                    {
+                        client.EndConnect(ar);
+                        return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        private static SpeedTestResult RunRealTcpSpeedBenchmark(string host, int payloadMb, Action<SpeedTestProgress> progressCallback)
         {
             SpeedTestResult result = new SpeedTestResult
             {
-                TargetPathOrHost = host,
+                TargetPathOrHost = host + ":" + SpeedTestPort,
                 IsSocketMode = true
             };
 
             long totalBytes = (long)payloadMb * 1024 * 1024;
-            int chunkSize = 32 * 1024;
-            byte[] buffer = new byte[chunkSize];
+            int chunkSize = 64 * 1024;
+            byte[] chunk = new byte[chunkSize];
 
             try
             {
+                // 1. Upload Test (Physical binary push over TCP socket)
                 if (progressCallback != null)
                 {
-                    progressCallback(new SpeedTestProgress { Stage = "Measuring network link speed on " + host + ":445...", Percent = 15, TotalBytes = totalBytes });
+                    progressCallback(new SpeedTestProgress { Stage = "Measuring Physical TCP Upload...", Percent = 0, TotalBytes = totalBytes });
                 }
 
-                Stopwatch sw = Stopwatch.StartNew();
-                long bytesTransferred = 0;
-                int iterations = Math.Min(payloadMb * 6, 30);
-
-                for (int i = 0; i < iterations; i++)
+                Stopwatch swUp = Stopwatch.StartNew();
+                using (TcpClient client = new TcpClient())
                 {
-                    using (TcpClient client = new TcpClient())
-                    {
-                        client.NoDelay = true;
-                        client.SendBufferSize = chunkSize;
-                        client.ReceiveBufferSize = chunkSize;
+                    client.NoDelay = true;
+                    client.SendBufferSize = chunkSize;
+                    client.ReceiveBufferSize = chunkSize;
+                    client.Connect(host, SpeedTestPort);
 
-                        IAsyncResult ar = client.BeginConnect(host, 445, null, null);
-                        if (!ar.AsyncWaitHandle.WaitOne(1500))
+                    using (NetworkStream ns = client.GetStream())
+                    {
+                        byte[] cmd = Encoding.ASCII.GetBytes("UP " + totalBytes + "\n");
+                        ns.Write(cmd, 0, cmd.Length);
+
+                        long bytesSent = 0;
+                        while (bytesSent < totalBytes)
                         {
-                            throw new Exception("Connection to " + host + ":445 timed out.");
+                            int toSend = (int)Math.Min(chunkSize, totalBytes - bytesSent);
+                            ns.Write(chunk, 0, toSend);
+                            bytesSent += toSend;
+
+                            double elapsed = swUp.Elapsed.TotalSeconds;
+                            if (elapsed > 0 && progressCallback != null && (bytesSent % (1024 * 1024) == 0 || bytesSent >= totalBytes))
+                            {
+                                double currentSpeed = bytesSent / elapsed;
+                                int percent = (int)((bytesSent * 50) / totalBytes);
+                                progressCallback(new SpeedTestProgress
+                                {
+                                    Stage = "Streaming Physical TCP Upload...",
+                                    Percent = percent,
+                                    CurrentSpeedBytesPerSec = currentSpeed,
+                                    BytesProcessed = bytesSent,
+                                    TotalBytes = totalBytes
+                                });
+                            }
                         }
-                        client.EndConnect(ar);
 
-                        NetworkStream stream = client.GetStream();
-                        stream.Write(buffer, 0, 128);
-                        bytesTransferred += 128;
-                    }
-
-                    int percent = (int)(((i + 1) * 100) / iterations);
-                    if (progressCallback != null)
-                    {
-                        progressCallback(new SpeedTestProgress
-                        {
-                            Stage = "Streaming throughput test packets...",
-                            Percent = percent,
-                            BytesProcessed = bytesTransferred,
-                            TotalBytes = totalBytes
-                        });
+                        byte[] ack = new byte[8];
+                        ns.Read(ack, 0, ack.Length);
                     }
                 }
-                sw.Stop();
+                swUp.Stop();
 
-                double elapsed = Math.Max(0.001, sw.Elapsed.TotalSeconds);
-                var ping = PingHostDetailed(host);
-                double latencyMs = ping.Success ? Math.Max(0.5, ping.RoundtripTimeMs) : 5.0;
-                
-                // Typical LAN throughput model based on RTT latency
-                double bandwidthBytesPerSec = Math.Min(125000000.0, (1000000.0 / (latencyMs / 1000.0)));
-                if (bandwidthBytesPerSec < 10000000.0) bandwidthBytesPerSec = 12500000.0; // 100 Mbps floor on LAN
+                double upTime = Math.Max(0.001, swUp.Elapsed.TotalSeconds);
+                result.WriteSpeedBytesPerSec = totalBytes / upTime;
 
-                result.WriteSpeedBytesPerSec = bandwidthBytesPerSec * 0.94;
-                result.ReadSpeedBytesPerSec = bandwidthBytesPerSec * 1.06;
-                result.AverageSpeedBytesPerSec = bandwidthBytesPerSec;
-                result.TotalBytesTransferred = bytesTransferred;
-                result.DurationSeconds = elapsed;
+                // 2. Download Test (Physical binary pull over TCP socket)
+                if (progressCallback != null)
+                {
+                    progressCallback(new SpeedTestProgress { Stage = "Measuring Physical TCP Download...", Percent = 50, TotalBytes = totalBytes });
+                }
+
+                Stopwatch swDown = Stopwatch.StartNew();
+                using (TcpClient client = new TcpClient())
+                {
+                    client.NoDelay = true;
+                    client.SendBufferSize = chunkSize;
+                    client.ReceiveBufferSize = chunkSize;
+                    client.Connect(host, SpeedTestPort);
+
+                    using (NetworkStream ns = client.GetStream())
+                    {
+                        byte[] cmd = Encoding.ASCII.GetBytes("DOWN " + totalBytes + "\n");
+                        ns.Write(cmd, 0, cmd.Length);
+
+                        long bytesRecv = 0;
+                        byte[] recvBuf = new byte[chunkSize];
+                        while (bytesRecv < totalBytes)
+                        {
+                            int r = ns.Read(recvBuf, 0, (int)Math.Min(chunkSize, totalBytes - bytesRecv));
+                            if (r <= 0) break;
+                            bytesRecv += r;
+
+                            double elapsed = swDown.Elapsed.TotalSeconds;
+                            if (elapsed > 0 && progressCallback != null && (bytesRecv % (1024 * 1024) == 0 || bytesRecv >= totalBytes))
+                            {
+                                double currentSpeed = bytesRecv / elapsed;
+                                int percent = 50 + (int)((bytesRecv * 50) / totalBytes);
+                                progressCallback(new SpeedTestProgress
+                                {
+                                    Stage = "Streaming Physical TCP Download...",
+                                    Percent = percent,
+                                    CurrentSpeedBytesPerSec = currentSpeed,
+                                    BytesProcessed = bytesRecv,
+                                    TotalBytes = totalBytes
+                                });
+                            }
+                        }
+                    }
+                }
+                swDown.Stop();
+
+                double downTime = Math.Max(0.001, swDown.Elapsed.TotalSeconds);
+                result.ReadSpeedBytesPerSec = totalBytes / downTime;
+                result.AverageSpeedBytesPerSec = (result.WriteSpeedBytesPerSec + result.ReadSpeedBytesPerSec) / 2.0;
+                result.TotalBytesTransferred = totalBytes * 2;
+                result.DurationSeconds = upTime + downTime;
                 result.Success = true;
             }
             catch (Exception ex)
             {
                 result.Success = false;
                 result.ErrorMessage = ex.Message;
-                Logger.Error("Socket speed test error on " + host, ex);
+                Logger.Error("Real TCP speed benchmark error on " + host, ex);
             }
 
             return result;

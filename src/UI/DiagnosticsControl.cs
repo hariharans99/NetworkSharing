@@ -27,7 +27,7 @@ namespace NetworkSharing.UI
 
         // 3. Speed Test Card (Actual speed between 2 computers with unit toggle)
         private ModernCard _cardSpeed;
-        private TextBox _txtSpeedTarget;
+        private ComboBox _cmbSpeedTarget;
         private ComboBox _cmbPayloadSize;
         private ModernButton _btnStartSpeedTest;
         private ProgressBar _speedProgress;
@@ -203,8 +203,15 @@ namespace NetworkSharing.UI
             Label lblSpeedTarget = new Label { Text = "Target Host / Share:", Location = new Point(18, 42), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
             _cardSpeed.Controls.Add(lblSpeedTarget);
 
-            _txtSpeedTarget = new TextBox { Location = new Point(165, 39), Height = 28, Font = UITheme.RegularFont, Text = localIp, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            _cardSpeed.Controls.Add(_txtSpeedTarget);
+            _cmbSpeedTarget = new ComboBox
+            {
+                Location = new Point(165, 39),
+                Height = 28,
+                Font = UITheme.RegularFont,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            _cardSpeed.Controls.Add(_cmbSpeedTarget);
 
             Label lblSize = new Label { Text = "Payload:", Location = new Point(18, 78), AutoSize = true, Font = UITheme.BoldFont, UseMnemonic = false };
             _cardSpeed.Controls.Add(lblSize);
@@ -424,7 +431,7 @@ namespace NetworkSharing.UI
             _txtPingOutput.Width = targetWidth - 36;
 
             // Speed layout
-            _txtSpeedTarget.Width = targetWidth - 165 - 195;
+            _cmbSpeedTarget.Width = targetWidth - 165 - 195;
             _btnStartSpeedTest.Location = new Point(targetWidth - 184, 70);
             _speedProgress.Width = targetWidth - 36;
             _txtLogs.Width = targetWidth - 36;
@@ -440,6 +447,39 @@ namespace NetworkSharing.UI
             _lblHostDetails.Text = string.Format(
                 "Computer Name : {0}\nLocal IPv4    : {1}   (Subnet Mask: {2})\nFirewall Mode : {3}",
                 comp, ip, mask, isPriv ? "Private Network (SMB Inbound Active & Protected)" : "Public Network (SMB Inbound Blocked by Windows Firewall)");
+
+            // Auto-populate Speed Target with real options
+            _cmbSpeedTarget.Items.Clear();
+            _cmbSpeedTarget.Items.Add(ip);
+
+            var localShares = ShareManager.GetActiveShares();
+            foreach (var s in localShares)
+            {
+                string unc = string.Format(@"\\{0}\{1}", ip, s.ShareName);
+                if (!_cmbSpeedTarget.Items.Contains(unc))
+                {
+                    _cmbSpeedTarget.Items.Add(unc);
+                }
+            }
+
+            var mappedDrives = DriveMapper.GetMappedDrives();
+            foreach (var md in mappedDrives)
+            {
+                string d = md.DriveLetter;
+                if (!string.IsNullOrEmpty(d) && !_cmbSpeedTarget.Items.Contains(d))
+                {
+                    _cmbSpeedTarget.Items.Add(d);
+                }
+            }
+
+            if (localShares.Count > 0)
+            {
+                _cmbSpeedTarget.Text = string.Format(@"\\{0}\{1}", ip, localShares[0].ShareName);
+            }
+            else
+            {
+                _cmbSpeedTarget.Text = ip;
+            }
 
             StringBuilder sb = new StringBuilder();
             foreach (var l in Logger.GetRecentEntries())
@@ -565,10 +605,10 @@ namespace NetworkSharing.UI
 
         private void OnStartSpeedTestClick(object sender, EventArgs e)
         {
-            string target = _txtSpeedTarget.Text.Trim();
+            string target = _cmbSpeedTarget.Text.Trim();
             if (string.IsNullOrEmpty(target))
             {
-                MessageBox.Show("Please enter a target host IP, UNC path (e.g. \\\\192.168.0.128\\Drive_D), or mapped drive letter (e.g. Z:).", "Target Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Please select or enter a target host IP, UNC share (e.g. \\\\192.168.0.128\\Drive_D), or mapped drive letter (e.g. Z:).", "Target Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -584,7 +624,7 @@ namespace NetworkSharing.UI
             _btnStartSpeedTest.Enabled = false;
             _btnStartSpeedTest.Text = "Testing Speed...";
             _speedProgress.Value = 0;
-            _lblSpeedStatus.Text = "Starting network speed benchmark (" + payloadMb + " MB payload)...";
+            _lblSpeedStatus.Text = "Starting real physical network speed benchmark (" + payloadMb + " MB payload)...";
             _lblSpeedStatus.ForeColor = UITheme.SubTextColor;
 
             Task.Factory.StartNew(() =>
@@ -610,8 +650,10 @@ namespace NetworkSharing.UI
                         if (_lastSpeedResult.Success)
                         {
                             RenderSpeedMetrics();
-                            string modeDesc = _lastSpeedResult.IsSocketMode ? "Direct Socket Throughput" : "SMB Network Share Throughput";
-                            _lblSpeedStatus.Text = string.Format("✔ Speed test completed successfully ({0}) in {1:F2}s.", modeDesc, _lastSpeedResult.DurationSeconds);
+                            string modeDesc = _lastSpeedResult.IsSocketMode 
+                                ? "Real Physical TCP Wire Stream (Port 52010)" 
+                                : "Real Physical SMB File Transfer (Read/Write)";
+                            _lblSpeedStatus.Text = string.Format("✔ Real physical speed test completed ({0}) in {1:F2}s.", modeDesc, _lastSpeedResult.DurationSeconds);
                             _lblSpeedStatus.ForeColor = UITheme.SuccessColor;
 
                             // Estimate connection type
@@ -621,7 +663,7 @@ namespace NetworkSharing.UI
                             else if (mbps >= 300) rating = "High-Speed Wi-Fi 5/6 (300+ Mbps) Verified";
                             else if (mbps >= 80) rating = "100 Mbps Ethernet / 2.4 GHz Wi-Fi";
 
-                            _lblSpeedDetails.Text = string.Format("Classification: {0}   •   Transferred: {1} MB payload in {2:F2}s",
+                            _lblSpeedDetails.Text = string.Format("Classification: {0}   •   Transferred: {1} MB payload physically in {2:F2}s",
                                 rating, payloadMb, _lastSpeedResult.DurationSeconds);
                         }
                         else

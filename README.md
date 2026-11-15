@@ -142,8 +142,8 @@ Run the built-in automated verification tests from the command line:
 ## 📦 Binary Release Manifest
 
 * **File Name:** `NetworkSharing.exe`
-* **Size:** `181,760 bytes` (181.8 KB)
+* **Size:** `185,856 bytes` (185.9 KB)
 * **Architecture:** `x64`
 * **Target Runtime:** .NET Framework 4.5+ / Windows 10 & 11 native
-* **SHA-256 Checksum:** `20A5731D60CBF72803DFA29E04DB46EECE6C7E987B83A5F777DFF7BFFCB562E3`
+* **SHA-256 Checksum:** `5AB7E5BCECA337D5075418D1B1EB136F77422FF71031FA980B6BA603276E961A`
 
